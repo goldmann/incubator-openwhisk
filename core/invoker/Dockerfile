@@ -1,6 +1,7 @@
 FROM scala
 
 ENV DOCKER_VERSION 1.12.0
+ENV KUBERNETES_VERSION 1.6.4
 
 # Uncomment to fetch latest version of docker instead: RUN wget -qO- https://get.docker.com | sh
 # Install docker client
@@ -10,6 +11,11 @@ tar --strip-components 1 -xvzf docker-${DOCKER_VERSION}.tgz -C /usr/bin docker/d
 rm -f docker-${DOCKER_VERSION}.tgz && \
 chmod +x /usr/bin/docker && \
 chmod +x /usr/bin/docker-runc
+
+# Install kubernetes client
+RUN wget --no-verbose https://storage.googleapis.com/kubernetes-release/release/v${KUBERNETES_VERSION}/bin/linux/amd64/kubectl && \
+chmod +x kubectl && \
+mv kubectl /usr/bin/kubectl
 
 COPY build/distributions/invoker.tar ./
 RUN tar xf invoker.tar && \
