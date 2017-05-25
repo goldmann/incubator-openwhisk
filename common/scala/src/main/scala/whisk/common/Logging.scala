@@ -258,6 +258,7 @@ object LoggingMarkers {
   val INVOKER_ACTIVATION = LogMarkerToken(invoker, activation, start)
   def INVOKER_DOCKER_CMD(cmd: String) = LogMarkerToken(invoker, s"docker.$cmd", start)
   def INVOKER_RUNC_CMD(cmd: String) = LogMarkerToken(invoker, s"runc.$cmd", start)
+  def INVOKER_KUBECTL_CMD(cmd: String) = LogMarkerToken(invoker, s"kubectl.$cmd", start)
   def INVOKER_CONTAINER_START(actionName: String, namespaceName: String, containerState: String) =
     LogMarkerToken(invoker, s"container_start_${containerState}_${namespaceName}_$actionName", count)
 
