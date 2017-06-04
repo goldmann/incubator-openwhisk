@@ -83,6 +83,13 @@ class InvokerReactive(
 //    cleanup()
 //    sys.addShutdownHook(cleanup())
 
+   /** Cleans up all running wsk_ containers */
+   def cleanup() = {
+       kubernetes.rm("invoker", s"invoker$instance")(TransactionId.invokerNanny)
+   }
+   cleanup()
+   sys.addShutdownHook(cleanup())
+
     /** Factory used by the ContainerProxy to physically create a new container. */
     val containerFactory = (tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize) => {
         val image = if (userProvidedImage) {
@@ -106,7 +113,7 @@ class InvokerReactive(
             tid,
             image = image,
             userProvidedImage = userProvidedImage,
-            environment = Map("__OW_API_HOST" -> config.wskApiHost),
+            labels = Map("invoker" -> s"invoker$instance"),
             name = Some(name))
     }
 

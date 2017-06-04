@@ -54,21 +54,21 @@ object KubernetesContainer {
       * @param image image to create the container from
       * @param userProvidedImage whether the image is provided by the user
       *     or is an OpenWhisk provided image
-      * @param environment environment variables to set on the container
+      * @param labels labels to set on the container
       * @param name optional name for the container
       * @return a Future which either completes with a KubernetesContainer or one of two specific failures
       */
     def create(transid: TransactionId,
                image: String,
                userProvidedImage: Boolean = false,
-               environment: Map[String, String] = Map(),
+               labels: Map[String, String] = Map(),
                name: Option[String] = None)(
                   implicit kubernetes: KubernetesApi, ec: ExecutionContext, log: Logging): Future[KubernetesContainer] = {
         implicit val tid = transid
 
         val podName = name.getOrElse(ContainerProxy.containerName("default", image)).replace("_", "-").toLowerCase()
         for {
-            id <- kubernetes.run(image, podName).recoverWith {
+            id <- kubernetes.run(image, podName, labels).recoverWith {
                 case _ => Future.failed(WhiskContainerStartupError(s"Failed to run container with image '${image}'."))
             }
             ip <- kubernetes.inspectIPAddress(id).recoverWith {
