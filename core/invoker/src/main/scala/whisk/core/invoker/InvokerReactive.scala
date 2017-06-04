@@ -16,7 +16,9 @@
 
 package whisk.core.invoker
 
+import scala.concurrent.Await
 import scala.concurrent.Future
+import scala.concurrent.duration._
 import scala.util.Failure
 import scala.util.Success
 
@@ -85,7 +87,8 @@ class InvokerReactive(
 
     /** Cleans up all running wsk_ containers */
     def cleanup() = {
-        kubernetes.rm("invoker", s"invoker$instance")(TransactionId.invokerNanny)
+        val cleaning = kubernetes.rm("invoker", s"invoker$instance")(TransactionId.invokerNanny)
+        Await.ready(cleaning, 30.seconds)
     }
     cleanup()
     sys.addShutdownHook(cleanup())
