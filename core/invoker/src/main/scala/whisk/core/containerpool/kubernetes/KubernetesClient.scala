@@ -61,15 +61,18 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
     }
 
     def run(image: String, name: String, labels: Map[String, String] = Map())(implicit transid: TransactionId): Future[ContainerId] = {
-        val result = runCmd("run", name, "--image", image, "--restart", "Never").map {_ => name}.map(ContainerId.apply)
-        if (!labels.isEmpty) {
-            val args = Seq("label", "pod", name) ++
-            labels.map {
-                case (key, value) => s"$key=$value"
+        val run = runCmd("run", name, "--image", image, "--restart", "Never").map {_ => name}.map(ContainerId.apply)
+        if (labels.isEmpty) {
+            run
+        } else {
+            run.flatMap { id => 
+                val args = Seq("label", "pod", id.asString) ++
+                    labels.map {
+                        case (key, value) => s"$key=$value"
+                    }
+                runCmd(args: _*).map {_ => id}
             }
-            runCmd(args: _*)
         }
-        result
     }
 
     def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerIp] = getIP(id)
