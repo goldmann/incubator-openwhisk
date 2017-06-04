@@ -20,6 +20,7 @@ package whisk.core.invoker
 import java.nio.charset.StandardCharsets
 import java.time.Instant
 import scala.concurrent.Future
+import scala.concurrent.duration._
 import scala.util.Failure
 import scala.util.Success
 import org.apache.kafka.common.errors.RecordTooLargeException

@@ -24,8 +24,8 @@ import akka.event.Logging.ErrorLevel
 import whisk.common.Logging
 import whisk.common.LoggingMarkers
 import whisk.common.TransactionId
-import whisk.core.containerpool.docker.ContainerId
-import whisk.core.containerpool.docker.ContainerIp
+import whisk.core.containerpool.ContainerId
+import whisk.core.containerpool.ContainerAddress
 import whisk.core.containerpool.docker.ProcessRunner
 
 import scala.concurrent.ExecutionContext
@@ -43,7 +43,7 @@ import scala.util.Try
   * You only need one instance (and you shouldn't get more).
   */
 class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Logging)
-    extends KubernetesApi with ProcessRunner {
+        extends KubernetesApi with ProcessRunner {
     implicit private val ec = executionContext
 
     // Determines how to run kubectl. Failure to find a kubectl binary implies
@@ -60,13 +60,28 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
         Seq(kubectlBin)
     }
 
-    def run(image: String, name: String)(implicit transid: TransactionId): Future[ContainerId] =
-        runCmd("run", name, "--image", image, "--restart", "Never").map {_ => name}.map(ContainerId.apply)
+    def run(image: String, name: String, labels: Map[String, String] = Map())(implicit transid: TransactionId): Future[ContainerId] = {
+        val run = runCmd("run", name, "--image", image, "--restart", "Never").map {_ => name}.map(ContainerId.apply)
+        if (labels.isEmpty) {
+            run
+        } else {
+            run.flatMap { id => 
+                val args = Seq("label", "pod", id.asString) ++
+                    labels.map {
+                        case (key, value) => s"$key=$value"
+                    }
+                runCmd(args: _*).map {_ => id}
+            }
+        }
+    }
 
     def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerIp] = getIP(id)
 
     def rm(id: ContainerId)(implicit transid: TransactionId): Future[Unit] =
         runCmd("delete", "--now", "pod", id.asString).map(_ => ())
+
+    def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit] =
+        runCmd("delete", "--now", "pod", "-l", s"$key=$value").map(_ => ())
 
     private def getIP(id: ContainerId, tries: Int = 25)(implicit transid: TransactionId): Future[ContainerIp] = {
         runCmd("get", "pod", id.asString, "--template", "{{.status.podIP}}").flatMap {
@@ -94,9 +109,11 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
 }
 
 trait KubernetesApi {
-    def run(image: String, name: String)(implicit transid: TransactionId): Future[ContainerId]
+    def run(image: String, name: String, labels: Map[String, String] = Map())(implicit transid: TransactionId): Future[ContainerId]
 
     def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerIp]
 
     def rm(id: ContainerId)(implicit transid: TransactionId): Future[Unit]
+
+    def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit]
 }
