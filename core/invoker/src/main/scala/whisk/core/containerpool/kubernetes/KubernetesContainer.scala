@@ -19,8 +19,10 @@ package whisk.core.containerpool.kubernetes
 import java.time.Instant
 
 import scala.collection.mutable.Buffer
+import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
+import scala.concurrent.duration._
 import scala.concurrent.duration.FiniteDuration
 import scala.util.Failure
 import scala.util.Success
@@ -35,6 +37,7 @@ import whisk.core.container.HttpUtils
 import whisk.core.container.Interval
 import whisk.core.container.RunResult
 import whisk.core.containerpool.Container
+import whisk.core.containerpool.ContainerFactory
 import whisk.core.containerpool.ContainerProxy
 import whisk.core.containerpool.InitializationError
 import whisk.core.containerpool.WhiskContainerStartupError
@@ -42,8 +45,10 @@ import whisk.core.containerpool.docker.ContainerId
 import whisk.core.containerpool.docker.ContainerIp
 import whisk.core.entity.ActivationResponse
 import whisk.core.entity.ByteSize
+import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity.size._
 import whisk.core.invoker.ActionLogDriver
+import whisk.core.WhiskConfig
 import whisk.http.Messages
 
 object KubernetesContainer {
@@ -54,21 +59,23 @@ object KubernetesContainer {
       * @param image image to create the container from
       * @param userProvidedImage whether the image is provided by the user
       *     or is an OpenWhisk provided image
-      * @param environment environment variables to set on the container
+      * @param labels labels to set on the container
       * @param name optional name for the container
       * @return a Future which either completes with a KubernetesContainer or one of two specific failures
       */
     def create(transid: TransactionId,
                image: String,
                userProvidedImage: Boolean = false,
-               environment: Map[String, String] = Map(),
+               labels: Map[String, String] = Map(),
                name: Option[String] = None)(
                   implicit kubernetes: KubernetesApi, ec: ExecutionContext, log: Logging): Future[KubernetesContainer] = {
         implicit val tid = transid
 
-        val podName = name.getOrElse(ContainerProxy.containerName("default", image)).replace("_", "-").toLowerCase()
+        val invokerPrefix = labels.getOrElse("invoker", "")
+        val containerSuffix = name.getOrElse(ContainerProxy.containerName("default", image))
+        val podName = Array(invokerPrefix, containerSuffix).mkString("-").replace("_", "-").toLowerCase()
         for {
-            id <- kubernetes.run(image, podName).recoverWith {
+            id <- kubernetes.run(image, podName, labels).recoverWith {
                 case _ => Future.failed(WhiskContainerStartupError(s"Failed to run container with image '${image}'."))
             }
             ip <- kubernetes.inspectIPAddress(id).recoverWith {
@@ -177,5 +184,30 @@ class KubernetesContainer(id: ContainerId, ip: ContainerIp) (
             val finished = Instant.now()
             RunResult(Interval(started, finished), response)
         }
+    }
+}
+
+class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ec: ExecutionContext, logger: Logging) extends ContainerFactory {
+
+    implicit val kubernetes = new KubernetesClient()(ec)
+
+    def cleanup() = {
+        val cleaning = kubernetes.rm("invoker", label)(TransactionId.invokerNanny)
+        Await.ready(cleaning, 30.seconds)
+    }
+
+    def create(tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize): Future[Container] = {
+        val image = if (userProvidedImage) {
+            actionImage.publicImageName
+        } else {
+            actionImage.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
+        }
+
+        KubernetesContainer.create(
+            tid,
+            image = image,
+            userProvidedImage = userProvidedImage,
+            labels = Map("invoker" -> label),
+            name = Some(name))
     }
 }
