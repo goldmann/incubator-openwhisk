@@ -43,7 +43,7 @@ import scala.util.Try
   * You only need one instance (and you shouldn't get more).
   */
 class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Logging)
-    extends KubernetesApi with ProcessRunner {
+        extends KubernetesApi with ProcessRunner {
     implicit private val ec = executionContext
 
     // Determines how to run kubectl. Failure to find a kubectl binary implies
@@ -61,15 +61,15 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
     }
 
     def run(image: String, name: String, labels: Map[String, String] = Map())(implicit transid: TransactionId): Future[ContainerId] = {
-      val result = runCmd("run", name, "--image", image, "--restart", "Never").map {_ => name}.map(ContainerId.apply)
-      if (!labels.isEmpty) {
-        val args = Seq("label", "pod", name) ++
-          labels.map {
-            case (key, value) => s"$key=$value"
-          }
-        runCmd(args: _*)
-      }
-      result
+        val result = runCmd("run", name, "--image", image, "--restart", "Never").map {_ => name}.map(ContainerId.apply)
+        if (!labels.isEmpty) {
+            val args = Seq("label", "pod", name) ++
+            labels.map {
+                case (key, value) => s"$key=$value"
+            }
+            runCmd(args: _*)
+        }
+        result
     }
 
     def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerIp] = getIP(id)

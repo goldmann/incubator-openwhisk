@@ -52,7 +52,7 @@ class InvokerReactive(
     instance: Int,
     activationFeed: ActorRef,
     producer: MessageProducer)(implicit actorSystem: ActorSystem, logging: Logging)
-    extends MessageHandler(s"invoker$instance") {
+        extends MessageHandler(s"invoker$instance") {
 
     implicit val ec = actorSystem.dispatcher
 
@@ -83,12 +83,12 @@ class InvokerReactive(
 //    cleanup()
 //    sys.addShutdownHook(cleanup())
 
-   /** Cleans up all running wsk_ containers */
-   def cleanup() = {
-       kubernetes.rm("invoker", s"invoker$instance")(TransactionId.invokerNanny)
-   }
-   cleanup()
-   sys.addShutdownHook(cleanup())
+    /** Cleans up all running wsk_ containers */
+    def cleanup() = {
+        kubernetes.rm("invoker", s"invoker$instance")(TransactionId.invokerNanny)
+    }
+    cleanup()
+    sys.addShutdownHook(cleanup())
 
     /** Factory used by the ContainerProxy to physically create a new container. */
     val containerFactory = (tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize) => {
