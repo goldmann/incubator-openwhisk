@@ -24,6 +24,7 @@ import whisk.common.TransactionId
 import whisk.core.container.Interval
 import whisk.core.entity.ActivationResponse
 import whisk.core.entity.ByteSize
+import whisk.core.entity.ExecManifest.ImageName
 
 /**
  * An OpenWhisk biased container abstraction. This is **not only** an abstraction
@@ -64,3 +65,8 @@ case class BlackboxStartupError(msg: String) extends ContainerStartupError(msg)
 
 /** Indicates an error while initializing a container */
 case class InitializationError(interval: Interval, response: ActivationResponse) extends Exception(response.toString)
+
+trait ContainerFactory {
+    def create(tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize): Future[Container]
+    def cleanup(): Unit
+}

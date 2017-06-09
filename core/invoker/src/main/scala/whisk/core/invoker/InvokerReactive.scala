@@ -16,11 +16,10 @@
 
 package whisk.core.invoker
 
-import scala.concurrent.Await
 import scala.concurrent.Future
-import scala.concurrent.duration._
 import scala.util.Failure
 import scala.util.Success
+import scala.util.Try
 
 import akka.actor.ActorRef
 import akka.actor.ActorRefFactory
@@ -39,12 +38,11 @@ import whisk.core.containerpool.ContainerPool
 import whisk.core.containerpool.ContainerProxy
 import whisk.core.containerpool.PrewarmingConfig
 import whisk.core.containerpool.Run
-import whisk.core.containerpool.kubernetes.KubernetesClient
-import whisk.core.containerpool.kubernetes.KubernetesContainer
+import whisk.core.containerpool.docker.DockerContainerFactory
+import whisk.core.containerpool.kubernetes.KubernetesContainerFactory
 import whisk.core.database.NoDocumentException
 import whisk.core.dispatcher.ActivationFeed.ContainerReleased
 import whisk.core.dispatcher.MessageHandler
-import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity._
 import whisk.core.entity.size._
 import whisk.http.Messages
@@ -61,64 +59,15 @@ class InvokerReactive(
     private val entityStore = WhiskEntityStore.datastore(config)
     private val activationStore = WhiskActivationStore.datastore(config)
 
-    implicit val kubernetes = new KubernetesClient()(ec)
-
-//    implicit val docker = new DockerClientWithFileAccess()(ec)
-//    implicit val runc = new RuncClient(ec)
-
-//    /** Cleans up all running wsk_ containers */
-//    def cleanup() = {
-//        val cleaning = docker.ps(Seq("name" -> "wsk_"))(TransactionId.invokerNanny).flatMap { containers =>
-//            val removals = containers.map { id =>
-//                runc.resume(id)(TransactionId.invokerNanny).recoverWith {
-//                    // Ignore resume failures and try to remove anyway
-//                    case _ => Future.successful(())
-//                }.flatMap {
-//                    _ => docker.rm(id)(TransactionId.invokerNanny)
-//                }
-//            }
-//            Future.sequence(removals)
-//        }
-//
-//        Await.ready(cleaning, 30.seconds)
-//    }
-//    cleanup()
-//    sys.addShutdownHook(cleanup())
-
-    /** Cleans up all running wsk_ containers */
-    def cleanup() = {
-        val cleaning = kubernetes.rm("invoker", s"invoker$instance")(TransactionId.invokerNanny)
-        Await.ready(cleaning, 30.seconds)
+    private val factory = if (Try(config.invokerUseKubernetes.toBoolean).getOrElse(false)) {
+        new KubernetesContainerFactory(s"invoker$instance", config)
+    } else {
+        new DockerContainerFactory(config)
     }
-    cleanup()
-    sys.addShutdownHook(cleanup())
-
-    /** Factory used by the ContainerProxy to physically create a new container. */
-    val containerFactory = (tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize) => {
-        val image = if (userProvidedImage) {
-            actionImage.publicImageName
-        } else {
-            actionImage.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
-        }
-
-//        DockerContainer.create(
-//            tid,
-//            image = image,
-//            userProvidedImage = userProvidedImage,
-//            memory = memory,
-//            cpuShares = OldContainerPool.cpuShare(config),
-//            environment = Map("__OW_API_HOST" -> config.wskApiHost),
-//            network = config.invokerContainerNetwork,
-//            dnsServers = config.invokerContainerDns,
-//            name = Some(name))
-
-        KubernetesContainer.create(
-            tid,
-            image = image,
-            userProvidedImage = userProvidedImage,
-            labels = Map("invoker" -> s"invoker$instance"),
-            name = Some(name))
-    }
+    logging.info(this, s"using $factory")
+    
+    factory.cleanup()
+    sys.addShutdownHook(factory.cleanup())
 
     /** Sends an active-ack. */
     val ack = (tid: TransactionId, activation: WhiskActivation) => {
@@ -139,7 +88,7 @@ class InvokerReactive(
     }
 
     /** Creates a ContainerProxy Actor when being called. */
-    val childFactory = (f: ActorRefFactory) => f.actorOf(ContainerProxy.props(containerFactory, ack, store))
+    val childFactory = (f: ActorRefFactory) => f.actorOf(ContainerProxy.props(factory.create _, ack, store))
 
     val prewarmKind = "nodejs:6"
     val prewarmExec = ExecManifest.runtimesManifest.resolveDefaultRuntime(prewarmKind).map { manifest =>
