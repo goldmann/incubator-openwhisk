@@ -156,7 +156,7 @@ class InvokerReactive(
                         Parameters("path", msg.action.toString.toJson) ++ causedBy
                     })
 
-                activationFeed ! ContainerReleased
+                activationFeed ! FailedActivation(msg.transid)
                 ack(msg.transid, activation)
                 store(msg.transid, activation)
         }
