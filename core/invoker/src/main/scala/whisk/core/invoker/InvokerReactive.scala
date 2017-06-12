@@ -41,7 +41,7 @@ import whisk.core.containerpool.Run
 import whisk.core.containerpool.docker.DockerContainerFactory
 import whisk.core.containerpool.kubernetes.KubernetesContainerFactory
 import whisk.core.database.NoDocumentException
-import whisk.core.dispatcher.ActivationFeed.ContainerReleased
+import whisk.core.dispatcher.ActivationFeed.FailedActivation
 import whisk.core.dispatcher.MessageHandler
 import whisk.core.entity._
 import whisk.core.entity.size._
