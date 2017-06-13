@@ -29,4 +29,7 @@ ENV FLASK_PROXY_PORT 8080
 RUN mkdir -p /pythonAction
 ADD pythonrunner.py /pythonAction/
 
+RUN chgrp -R 0 /pythonAction \
+  && chmod -R g+rwX /pythonAction
+
 CMD ["/bin/bash", "-c", "cd pythonAction && python -u pythonrunner.py"]

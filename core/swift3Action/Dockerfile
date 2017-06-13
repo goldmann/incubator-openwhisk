@@ -65,4 +65,7 @@ RUN python /swift3Action/buildandrecord.py; rm /swift3Action/spm-build/.build/re
 #RUN cd /swift3Action/spm-build; swift build -c release; rm /swift3Action/spm-build/.build/release/Action
 ENV FLASK_PROXY_PORT 8080
 
+RUN chgrp -R 0 /swift3Action \
+  && chmod -R g+rwX /swift3Action
+
 CMD ["/bin/bash", "-c", "cd /swift3Action && PYTHONIOENCODING='utf-8' python -u swift3runner.py"]

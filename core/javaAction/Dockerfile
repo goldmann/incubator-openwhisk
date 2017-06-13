@@ -35,4 +35,7 @@ RUN cd /javaAction; ./gradlew oneJar
 
 RUN rm -rf /javaAction/src
 
+RUN chgrp -R 0 /javaAction \
+  && chmod -R g+rwX /javaAction
+
 CMD ["java", "-jar", "/javaAction/build/libs/javaAction-all.jar"]

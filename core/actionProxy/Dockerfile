@@ -13,11 +13,15 @@ RUN apk add --no-cache bash \
 
 ENV FLASK_PROXY_PORT 8080
 
-RUN mkdir -p /actionProxy
+RUN mkdir -p /actionProxy  \
+  && chgrp -R 0 /actionProxy \
+  && chmod -R g+rwX /actionProxy
 ADD actionproxy.py /actionProxy/
 
 RUN mkdir -p /action
 ADD stub.sh /action/exec
-RUN chmod +x /action/exec
+RUN chmod +x /action/exec \
+  && chgrp -R 0 /action \
+  && chmod -R g+rwX /action
 
 CMD ["/bin/bash", "-c", "cd actionProxy && python -u actionproxy.py"]

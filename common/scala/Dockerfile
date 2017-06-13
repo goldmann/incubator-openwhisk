@@ -26,4 +26,6 @@ RUN update-alternatives --install "/usr/bin/java" "java" "${JRE_HOME}/bin/java" 
   update-alternatives --install "/usr/bin/javac" "javac" "${JAVA_HOME}/bin/javac" 1 && \
   update-alternatives --set java "${JRE_HOME}/bin/java" && \
   update-alternatives --set javac "${JAVA_HOME}/bin/javac" && \
-  mkdir /logs
+  mkdir /logs && \
+  chgrp -R 0 /logs && \
+  chmod -R g+rwX /logs
