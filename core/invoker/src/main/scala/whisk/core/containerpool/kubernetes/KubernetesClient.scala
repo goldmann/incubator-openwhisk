@@ -27,12 +27,16 @@ import whisk.common.TransactionId
 import whisk.core.containerpool.docker.ContainerId
 import whisk.core.containerpool.docker.ContainerIp
 import whisk.core.containerpool.docker.ProcessRunner
+import whisk.core.invoker.ActionLogDriver
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
+
+import spray.json._
+import spray.json.DefaultJsonProtocol._
 
 /**
   * Serves as interface to the kubectl CLI tool.
@@ -83,6 +87,42 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
     def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit] =
         runCmd("delete", "--now", "pod", "-l", s"$key=$value").map(_ => ())
 
+    def logs(id: ContainerId, sinceTime: String)(implicit transid: TransactionId): Future[String] = {
+        val args = Seq("logs", "--timestamps", id.asString) ++ (if (sinceTime.isEmpty) None else Seq("--since-time", sinceTime))
+        runCmd(args: _*).map { output =>
+            val original = output.lines
+            val relevant = output.lines.dropWhile(s => !s.startsWith(sinceTime))
+            val result =
+                if (!relevant.isEmpty && original.size > relevant.size) {
+                    // drop the matching timestamp from the previous activation
+                    relevant.drop(1)
+                } else {
+                    original
+                }
+            // map the logs to the docker json file format expected by
+            // ActionLogDriver.processJsonDriverLogContents
+            var sentinelSeen = false
+            result.map { line =>
+                val pos = line.indexOf(" ")
+                val ts = line.substring(0, pos)
+                val msg = line.substring(pos+1)
+                // TODO: Figure out how to distinguish stdout/stderr
+                val stream =
+                    if (msg.trim == ActionLogDriver.LOG_ACTIVATION_SENTINEL) {
+                        if (!sentinelSeen) {
+                            sentinelSeen = true
+                            "stdout"
+                        } else {
+                            "stderr"
+                        }
+                    } else {
+                        "stdout"
+                    }
+                JsObject("log" -> msg.toJson, "stream" -> stream.toJson, "time" -> ts.toJson)
+            }.mkString("\n")
+        }
+    }
+
     private def getIP(id: ContainerId, tries: Int = 25)(implicit transid: TransactionId): Future[ContainerIp] = {
         runCmd("get", "pod", id.asString, "--template", "{{.status.podIP}}").flatMap {
             _ match {
@@ -116,4 +156,6 @@ trait KubernetesApi {
     def rm(id: ContainerId)(implicit transid: TransactionId): Future[Unit]
 
     def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit]
+
+    def logs(containerId: ContainerId, sinceTime: String)(implicit transid: TransactionId): Future[String]
 }
