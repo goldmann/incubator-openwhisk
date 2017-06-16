@@ -112,7 +112,6 @@ class KubernetesContainer(id: ContainerId, ip: ContainerIp) (
     def destroy()(implicit transid: TransactionId): Future[Unit] = kubernetes.rm(id)
 
     def initialize(initializer: JsObject, timeout: FiniteDuration)(implicit transid: TransactionId): Future[container.Interval] = {
-        logger.warn(this, "!!! INITIALIZING KUBERNETES CONTAINER");
         val start = transid.started(this, LoggingMarkers.INVOKER_ACTIVATION_INIT, s"sending initialization to $id $ip")
 
         val body = JsObject("value" -> initializer)
