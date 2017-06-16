@@ -33,6 +33,7 @@ import whisk.core.WhiskConfig
 import whisk.core.connector.ActivationMessage
 import whisk.core.connector.CompletionMessage
 import whisk.core.connector.MessageProducer
+import whisk.core.container.{ ContainerPool => OldContainerPool }
 import whisk.core.container.Interval
 import whisk.core.containerpool.ContainerPool
 import whisk.core.containerpool.ContainerProxy
@@ -97,7 +98,7 @@ class InvokerReactive(
 
     val pool = actorSystem.actorOf(ContainerPool.props(
         childFactory,
-        50,
+        OldContainerPool.getDefaultMaxActive(config),
         activationFeed,
         Some(PrewarmingConfig(2, prewarmExec, 256.MB))))
 
