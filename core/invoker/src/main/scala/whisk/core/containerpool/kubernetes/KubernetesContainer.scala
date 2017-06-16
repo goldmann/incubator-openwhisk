@@ -18,7 +18,6 @@ package whisk.core.containerpool.kubernetes
 
 import java.time.Instant
 
-import scala.collection.mutable.Buffer
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -73,7 +72,7 @@ object KubernetesContainer {
 
         val invokerPrefix = labels.getOrElse("invoker", "")
         val containerSuffix = name.getOrElse(ContainerProxy.containerName("default", image))
-        val podName = Array(invokerPrefix, containerSuffix).mkString("-").replace("_", "-").toLowerCase()
+        val podName = Array(invokerPrefix, containerSuffix).mkString("-").replace("_", "-").replaceAll("[()]", "").toLowerCase()
         for {
             id <- kubernetes.run(image, podName, labels).recoverWith {
                 case _ => Future.failed(WhiskContainerStartupError(s"Failed to run container with image '${image}'."))
@@ -101,6 +100,12 @@ object KubernetesContainer {
   */
 class KubernetesContainer(id: ContainerId, ip: ContainerIp) (
     implicit kubernetes: KubernetesApi, ec: ExecutionContext, logger: Logging) extends Container with ActionLogDriver {
+
+    /** The last read timestamp in the log file */
+    private var lastTimestamp = ""
+
+    protected val logsRetryCount = 15
+    protected val logsRetryWait = 100.millis
 
     /** HTTP connection to the container, will be lazily established by callContainer */
     private var httpConnection: Option[HttpUtils] = None
@@ -157,8 +162,27 @@ class KubernetesContainer(id: ContainerId, ip: ContainerIp) (
     }
 
     def logs(limit: ByteSize, waitForSentinel: Boolean)(implicit transid: TransactionId): Future[Vector[String]] = {
-        // TODO: Actually return logs from Kubernetes
-        Future.successful(Buffer[String]().toVector)
+
+        def readLogs(retries: Int): Future[Vector[String]] = {
+            kubernetes.logs(id, lastTimestamp).flatMap { rawLog =>
+                val lastTS = rawLog.lines.toSeq.lastOption.getOrElse("""{"time":""}""").parseJson.asJsObject.fields("time").convertTo[String]
+                val (isComplete, isTruncated, formattedLogs) = processJsonDriverLogContents(rawLog, waitForSentinel, limit)
+
+                if (retries > 0 && !isComplete && !isTruncated) {
+                    logger.info(this, s"log cursor advanced but missing sentinel, trying $retries more times")
+                    Thread.sleep(logsRetryWait.toMillis)
+                    readLogs(retries - 1)
+                } else {
+                    lastTimestamp = lastTS
+                    Future.successful(formattedLogs)
+                }
+            }.andThen {
+                case Failure(e) =>
+                    logger.error(this, s"Failed to obtain logs of ${id.asString}: ${e.getClass} - ${e.getMessage}")
+            }
+        }
+
+        readLogs(logsRetryCount)
     }
 
     /**
