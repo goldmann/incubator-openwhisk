@@ -90,11 +90,11 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
     def logs(id: ContainerId, sinceTime: String)(implicit transid: TransactionId): Future[String] = {
         val args = Seq("logs", "--timestamps", id.asString) ++ (if (sinceTime.isEmpty) None else Seq("--since-time", sinceTime))
         runCmd(args: _*).map { output =>
-            val original = output.lines
-            val relevant = output.lines.dropWhile(s => !s.startsWith(sinceTime))
+            val original = output.lines.toSeq
+            val relevant = original.dropWhile(s => !s.startsWith(sinceTime))
             val result =
                 if (!relevant.isEmpty && original.size > relevant.size) {
-                    // drop the matching timestamp from the previous activation
+                    // drop matching timestamp from previous activation
                     relevant.drop(1)
                 } else {
                     original
@@ -106,7 +106,8 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
                 val pos = line.indexOf(" ")
                 val ts = line.substring(0, pos)
                 val msg = line.substring(pos+1)
-                // TODO: Figure out how to distinguish stdout/stderr
+                // TODO: Until we're able to distinguish stdout/stderr
+                // from kubectl, we assume stdout except for one sentinel
                 val stream =
                     if (msg.trim == ActionLogDriver.LOG_ACTIVATION_SENTINEL) {
                         if (!sentinelSeen) {
