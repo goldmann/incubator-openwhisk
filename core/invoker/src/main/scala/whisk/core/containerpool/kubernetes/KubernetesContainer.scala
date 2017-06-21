@@ -71,7 +71,9 @@ object KubernetesContainer {
                   implicit kubernetes: KubernetesApi, ec: ExecutionContext, log: Logging): Future[KubernetesContainer] = {
         implicit val tid = transid
 
-        val podName = name.getOrElse(ContainerProxy.containerName("default", image)).replace("_", "-").toLowerCase()
+        val invokerPrefix = labels.getOrElse("invoker", "")
+        val containerSuffix = name.getOrElse(ContainerProxy.containerName("default", image))
+        val podName = Array(invokerPrefix, containerSuffix).mkString("-").replace("_", "-").toLowerCase()
         for {
             id <- kubernetes.run(image, podName, labels).recoverWith {
                 case _ => Future.failed(WhiskContainerStartupError(s"Failed to run container with image '${image}'."))
