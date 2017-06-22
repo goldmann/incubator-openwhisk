@@ -56,15 +56,12 @@ object KubernetesContainer {
       *
       * @param transid transaction creating the container
       * @param image image to create the container from
-      * @param userProvidedImage whether the image is provided by the user
-      *     or is an OpenWhisk provided image
       * @param labels labels to set on the container
       * @param name optional name for the container
       * @return a Future which either completes with a KubernetesContainer or one of two specific failures
       */
     def create(transid: TransactionId,
                image: String,
-               userProvidedImage: Boolean = false,
                labels: Map[String, String] = Map(),
                name: Option[String] = None)(
                   implicit kubernetes: KubernetesApi, ec: ExecutionContext, log: Logging): Future[KubernetesContainer] = {
@@ -228,7 +225,6 @@ class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ec
         KubernetesContainer.create(
             tid,
             image = image,
-            userProvidedImage = userProvidedImage,
             labels = Map("invoker" -> label),
             name = Some(name))
     }
