@@ -99,7 +99,7 @@ class ContainerProxy(
     val logging = new AkkaLogging(context.system.log)
 
     // The container is destroyed after this period of time
-    val unusedTimeout = 10.minutes
+    val unusedTimeout = 1.minutes
 
     // The container is not paused for this period of time
     // after an activation has finished successfully
