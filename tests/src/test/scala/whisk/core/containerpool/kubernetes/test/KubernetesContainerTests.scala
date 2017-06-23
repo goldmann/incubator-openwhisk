@@ -103,7 +103,6 @@ class KubernetesContainerTests extends FlatSpec
      */
     it should "create a new instance" in {
         implicit val kubernetes = new TestKubernetesClient
-        implicit val runc = stub[RuncApi]
 
         val image = "image"
         val labels = Map("test" -> "hi")
@@ -123,13 +122,12 @@ class KubernetesContainerTests extends FlatSpec
 
         val (testImage, testName, testLabels) = kubernetes.runs.head
         testImage shouldBe "image"
-        testName shouldBe "myContainer"
+        testName shouldBe "mycontainer"
         testLabels shouldBe labels
     }
 
     it should "pull a user provided image before creating the container" in {
         implicit val kubernetes = new TestKubernetesClient
-        implicit val runc = stub[RuncApi]
 
         val container = KubernetesContainer.create(transid = transid, image = "image")
         await(container)
@@ -146,7 +144,6 @@ class KubernetesContainerTests extends FlatSpec
                 Future.failed(new RuntimeException())
             }
         }
-        implicit val runc = stub[RuncApi]
 
         val container = KubernetesContainer.create(transid = transid, image = "image")
         a[WhiskContainerStartupError] should be thrownBy await(container)
@@ -163,7 +160,6 @@ class KubernetesContainerTests extends FlatSpec
                 Future.failed(new RuntimeException())
             }
         }
-        implicit val runc = stub[RuncApi]
 
         val container = KubernetesContainer.create(transid = transid, image = "image")
         a[WhiskContainerStartupError] should be thrownBy await(container)
@@ -180,7 +176,6 @@ class KubernetesContainerTests extends FlatSpec
                 Future.failed(new RuntimeException())
             }
         }
-        implicit val runc = stub[RuncApi]
 
         val container = KubernetesContainer.create(transid = transid, image = "image")
         a[WhiskContainerStartupError] should be thrownBy await(container)
@@ -193,23 +188,8 @@ class KubernetesContainerTests extends FlatSpec
     /*
      * KUBERNETES COMMANDS
      */
-    it should "halt and resume container via runc" in {
-        implicit val kubernetes = stub[KubernetesApi]
-        implicit val runc = stub[RuncApi]
-
-        val id = ContainerId("id")
-        val container = new KubernetesContainer(id, ContainerIp("ip"))
-
-        container.suspend()
-        container.resume()
-
-        (runc.pause(_: ContainerId)(_: TransactionId)).verify(id, transid)
-        (runc.resume(_: ContainerId)(_: TransactionId)).verify(id, transid)
-    }
-
     it should "destroy a container via Kubernetes" in {
         implicit val kubernetes = stub[KubernetesApi]
-        implicit val runc = stub[RuncApi]
 
         val id = ContainerId("id")
         val container = new KubernetesContainer(id, ContainerIp("ip"))
@@ -227,7 +207,6 @@ class KubernetesContainerTests extends FlatSpec
      */
     it should "initialize a container" in {
         implicit val kubernetes = stub[KubernetesApi]
-        implicit val runc = stub[RuncApi]
 
         val interval = intervalOf(1.millisecond)
         val container = kubernetesContainer() {
@@ -249,7 +228,6 @@ class KubernetesContainerTests extends FlatSpec
 
     it should "properly deal with a timeout during initialization" in {
         implicit val kubernetes = stub[KubernetesApi]
-        implicit val runc = stub[RuncApi]
 
         val initTimeout = 1.second
         val interval = intervalOf(initTimeout + 1.nanoseconds)
@@ -277,7 +255,6 @@ class KubernetesContainerTests extends FlatSpec
      */
     it should "run a container" in {
         implicit val kubernetes = stub[KubernetesApi]
-        implicit val runc = stub[RuncApi]
 
         val interval = intervalOf(1.millisecond)
         val result = JsObject()
@@ -300,7 +277,6 @@ class KubernetesContainerTests extends FlatSpec
 
     it should "properly deal with a timeout during run" in {
         implicit val kubernetes = stub[KubernetesApi]
-        implicit val runc = stub[RuncApi]
 
         val runTimeout = 1.second
         val interval = intervalOf(runTimeout + 1.nanoseconds)
@@ -351,7 +327,6 @@ class KubernetesContainerTests extends FlatSpec
                 Future.successful(readResults.dequeue())
             }
         }
-        implicit val runc = stub[RuncApi]
 
         val container = kubernetesContainer(id = containerId)()
         // Read with tight limit to verify that no truncation occurs
@@ -377,7 +352,6 @@ class KubernetesContainerTests extends FlatSpec
                 Future.successful(readResults.dequeue())
             }
         }
-        implicit val runc = stub[RuncApi]
 
         val container = kubernetesContainer(id = containerId)()
         // Read without tight limit so that the full read result is processed
@@ -399,7 +373,6 @@ class KubernetesContainerTests extends FlatSpec
                 Future.failed(new IOException)
             }
         }
-        implicit val runc = stub[RuncApi]
 
         val container = kubernetesContainer()()
         an[IOException] should be thrownBy await(container.logs(limit = 1.MB, waitForSentinel = true))
@@ -425,7 +398,6 @@ class KubernetesContainerTests extends FlatSpec
                 Future.successful(returnValues.dequeue())
             }
         }
-        implicit val runc = stub[RuncApi]
 
         val container = kubernetesContainer()()
         // Read without tight limit so that the full read result is processed
@@ -436,7 +408,7 @@ class KubernetesContainerTests extends FlatSpec
         val (_, sinceTime1) = kubernetes.logsInvocations(0)
         sinceTime1 shouldBe ""
         val (_, sinceTime2) = kubernetes.logsInvocations(1)
-        sinceTime2 shouldBe "" // second read should start behind the first line
+        sinceTime2 shouldBe Instant.EPOCH.toString // second read should start behind the first line
 
         processedFirstLog should have size 1
         processedFirstLog shouldBe Vector(firstLogEntry.toFormattedString)
@@ -464,7 +436,6 @@ class KubernetesContainerTests extends FlatSpec
                 Future.successful(returnValues.dequeue())
             }
         }
-        implicit val runc = stub[RuncApi]
 
         val container = kubernetesContainer()(retryCount = retries)
         // Read without tight limit so that the full read result is processed
@@ -500,7 +471,6 @@ class KubernetesContainerTests extends FlatSpec
                 Future.successful(returnValues.dequeue())
             }
         }
-        implicit val runc = stub[RuncApi]
 
         val container = kubernetesContainer()(retryCount = retries)
         // Read without tight limit so that the full read result is processed
@@ -539,7 +509,6 @@ class KubernetesContainerTests extends FlatSpec
                 Future.successful(returnValues.dequeue())
             }
         }
-        implicit val runc = stub[RuncApi]
 
         val container = kubernetesContainer()()
         val processedFirstLog = await(container.logs(limit = firstLogFirstEntry.log.sizeInBytes, waitForSentinel = true))
@@ -548,11 +517,11 @@ class KubernetesContainerTests extends FlatSpec
 
         kubernetes.logsInvocations should have size 3
         val (_, sinceTime1) = kubernetes.logsInvocations(0)
-        sinceTime1 shouldBe 0
+        sinceTime1 shouldBe ""
         val (_, sinceTime2) = kubernetes.logsInvocations(1)
-        sinceTime2 shouldBe "" // second read should start behind full content of first read
+        sinceTime2 shouldBe Instant.EPOCH.plusMillis(1L).toString // second read should start behind full content of first read
         val (_, sinceTime3) = kubernetes.logsInvocations(2)
-        sinceTime3 shouldBe "" // third read should start behind full content of first and second read
+        sinceTime3 shouldBe Instant.EPOCH.plusMillis(3L).toString // third read should start behind full content of first and second read
 
         processedFirstLog should have size 2
         processedFirstLog(0) shouldBe firstLogFirstEntry.toFormattedString

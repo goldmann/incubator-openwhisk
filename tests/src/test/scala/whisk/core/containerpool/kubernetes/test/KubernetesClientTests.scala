@@ -57,12 +57,6 @@ class KubernetesClientTests extends FlatSpec with Matchers with StreamLogging wi
 
     behavior of "KubernetesClient"
 
-    it should "throw NoSuchElementException if specified network does not exist when using 'inspectIPAddress'" in {
-        val client = kubernetesClient { Future.successful("<no value>") }
-
-        a[NoSuchElementException] should be thrownBy await(client.inspectIPAddress(id))
-    }
-
     it should "write proper log markers on a successful command" in {
         // a dummy string works here as we do not assert any output
         // from the methods below
@@ -85,15 +79,11 @@ class KubernetesClientTests extends FlatSpec with Matchers with StreamLogging wi
             result
         }
 
-        runAndVerify(client.rm(id), "rm", Seq("-f", id.asString))
+        runAndVerify(client.rm(id), "delete", Seq("--now", "pod", id.asString))
 
-        val network = "userland"
-        val inspectArgs = Seq("--format", s"{{.NetworkSettings.Networks.${network}.IPAddress}}", id.asString)
-        runAndVerify(client.inspectIPAddress(id), "inspect", inspectArgs) shouldBe ContainerIp(stdout)
+        runAndVerify(client.inspectIPAddress(id), "get", Seq("pod", id.asString, "--template", "{{.status.podIP}}")) shouldBe ContainerIp(stdout)
 
-        val image = "image"
-        val runArgs = Seq("--memory", "256m", "--cpushares", "1024")
-        runAndVerify(client.run(image, "name"), "run", Seq("-d") ++ runArgs ++ Seq(image)) shouldBe ContainerId(stdout)
+        runAndVerify(client.run("image", "name"), "run", Seq("name", "--image", "image", "--restart", "Never")) shouldBe ContainerId("name")
     }
 
     it should "write proper log markers on a failing command" in {
@@ -112,8 +102,8 @@ class KubernetesClientTests extends FlatSpec with Matchers with StreamLogging wi
             stream.reset()
         }
 
-        runAndVerify(client.rm(id), "rm")
-        runAndVerify(client.inspectIPAddress(id), "inspect")
+        runAndVerify(client.rm(id), "delete")
+        runAndVerify(client.inspectIPAddress(id), "get")
         runAndVerify(client.run("image", "name"), "run")
     }
 }

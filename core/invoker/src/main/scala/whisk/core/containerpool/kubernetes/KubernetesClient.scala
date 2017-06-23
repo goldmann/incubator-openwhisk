@@ -16,7 +16,6 @@
 
 package whisk.core.containerpool.kubernetes
 
-import java.io.FileNotFoundException
 import java.nio.file.Files
 import java.nio.file.Paths
 
@@ -58,7 +57,7 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
         val kubectlBin = Try {
             alternatives.find(a => Files.isExecutable(Paths.get(a))).get
         } getOrElse {
-            throw new FileNotFoundException(s"Couldn't locate kubectl binary (tried: ${alternatives.mkString(", ")}).")
+            "kubectl"
         }
 
         Seq(kubectlBin)

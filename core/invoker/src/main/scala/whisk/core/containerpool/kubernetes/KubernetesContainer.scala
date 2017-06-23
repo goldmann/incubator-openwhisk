@@ -114,7 +114,6 @@ class KubernetesContainer(id: ContainerId, ip: ContainerIp) (
     def destroy()(implicit transid: TransactionId): Future[Unit] = kubernetes.rm(id)
 
     def initialize(initializer: JsObject, timeout: FiniteDuration)(implicit transid: TransactionId): Future[container.Interval] = {
-        logger.warn(this, "!!! INITIALIZING KUBERNETES CONTAINER");
         val start = transid.started(this, LoggingMarkers.INVOKER_ACTIVATION_INIT, s"sending initialization to $id $ip")
 
         val body = JsObject("value" -> initializer)
@@ -160,7 +159,11 @@ class KubernetesContainer(id: ContainerId, ip: ContainerIp) (
 
         def readLogs(retries: Int): Future[Vector[String]] = {
             kubernetes.logs(id, lastTimestamp).flatMap { rawLog =>
-                val lastTS = rawLog.lines.toSeq.lastOption.getOrElse("""{"time":""}""").parseJson.asJsObject.fields("time").convertTo[String]
+                val lastTS = try {
+                    rawLog.lines.toSeq.last.parseJson.asJsObject.fields("time").convertTo[String]
+                } catch {
+                    case _: Throwable => ""
+                }
                 val (isComplete, isTruncated, formattedLogs) = processJsonDriverLogContents(rawLog, waitForSentinel, limit)
 
                 if (retries > 0 && !isComplete && !isTruncated) {
