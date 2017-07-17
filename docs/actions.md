@@ -106,7 +106,20 @@ Review the following steps and examples to create your first JavaScript action.
   }
   ```
 
-6. If you forget to record the activation ID, you can get a list of activations ordered from the most recent to the oldest. Run the following command to get a list of your activations:
+6. To access the most recent activation record, activation results or activation logs, use the `--last` or `-l` flag. Run the following command to get your last activation result.
+
+  ```
+  wsk activation result --last
+  ```
+  ```json
+  {
+      "payload": "Hello world"
+  }
+  ```
+
+  Note that you should not use an activation ID with the flag `--last`.
+
+7. If you forget to record the activation ID, you can get a list of activations ordered from the most recent to the oldest. Run the following command to get a list of your activations:
 
   ```
   wsk activation list
@@ -257,6 +270,20 @@ Rather than pass all the parameters to an action every time, you can bind certai
       "payload": "Hello, Bernie from Washington, DC"
   }
   ```
+
+### Getting an action URL
+
+An action can be invoked through the REST interface via an HTTPS request. To get an action URL, execute the following command:
+
+```
+$ wsk action get actionName --url
+ok: got action actionName
+https://${APIHOST}/api/v1/namespaces/${NAMESPACE}/actions/actionName
+```
+
+**Note:** Authentication must be provided when invoking an action via an HTTPS request. For more information regarding
+action invocations using the REST interface, see
+[Using REST APIs with OpenWhisk](rest_api.md#actions).
 
 ### Creating asynchronous actions
 
@@ -610,9 +637,10 @@ follows:
 wsk action create helloSwift hello.swift
 ```
 
-When you use the command line and a `.swift` source file, you do not need to
-specify that you are creating a Swift action (as opposed to a JavaScript action);
-the tool determines that from the file extension.
+The CLI automatically infers the type of the action from the source file extension. For `.swift` source files, the action runs using a Swift 3.1.1 runtime. You can also create an action that runs with Swift 3.0 by explicitly specifying the parameter `--kind swift:3`. See the Swift [reference](./reference.md#swift-actions) for more information about Swift 3.0 vs. 3.1.
+
+**Note:** The actions you created using the kind `swift:3` will continue to work for a short period, however you should begin migrating your deployment scripts and recompiling your swift actions using the new kind `swift:3.1.1`. Support for Swift 3.0 is deprecated and will be removed soon.
+
 
 Action invocation is the same for Swift actions as it is for JavaScript actions:
 
@@ -636,57 +664,79 @@ When you create an OpenWhisk Swift action with a Swift source file, it has to be
 To avoid the cold-start delay, you can compile your Swift file into a binary and then upload to OpenWhisk in a zip file. As you need the OpenWhisk scaffolding, the easiest way to create the binary is to build it within the same environment as it will be run in. These are the steps:
 
 - Run an interactive Swift action container.
-```
-docker run --rm -it -v "$(pwd):/owexec" openwhisk/swift3action bash
-```
-   This puts you in a bash shell within the Docker container. Execute the following commands within it:
+  ```
+  docker run --rm -it -v "$(pwd):/owexec" openwhisk/action-swift-v3.1.1 bash
+  ```
+  This puts you in a bash shell within the Docker container.
 
-- Install zip for convenience, to package the binary
+- Copy the source code and prepare to build it.
   ```
-  apt-get install -y zip
+  cp /owexec/hello.swift /swift3Action/spm-build/main.swift
   ```
-
-- Copy the source code and prepare to build it
-  ```
-  cp /owexec/hello.swift /swift3Action/spm-build/main.swift 
-  ```
-
   ```
   cat /swift3Action/epilogue.swift >> /swift3Action/spm-build/main.swift
   ```
-
   ```
   echo '_run_main(mainFunction:main)' >> /swift3Action/spm-build/main.swift
   ```
+  Copy any additional source files to `/swift3Action/spm-build/`
 
-- Build and link
+
+- (Optional) Create the `Package.swift` file to add dependencies.
+  ```swift
+  import PackageDescription
+
+  let package = Package(
+    name: "Action",
+        dependencies: [
+            .Package(url: "https://github.com/apple/example-package-deckofplayingcards.git", majorVersion: 3),
+            .Package(url: "https://github.com/IBM-Swift/CCurl.git", "0.2.3"),
+            .Package(url: "https://github.com/IBM-Swift/Kitura-net.git", "1.7.10"),
+            .Package(url: "https://github.com/IBM-Swift/SwiftyJSON.git", "15.0.1"),
+            .Package(url: "https://github.com/watson-developer-cloud/swift-sdk.git", "0.16.0")
+        ]
+  )
   ```
-  /swift3Action/spm-build/swiftbuildandlink.sh
+  As you can see this example adds `swift-watson-sdk` and `example-package-deckofplayingcards` dependencies.
+  Notice that `CCurl`, `Kitura-net` and `SwiftyJSON` are provided in the standard Swift action
+and so you should include them in your own `Package.swift`.
+
+- Copy Package.swift to spm-build directory
+  ```
+  cp /owexec/Package.swift /swift3Action/spm-build/Package.swift
   ```
 
-- Create the zip archive
+- Change to the spm-build directory.
   ```
   cd /swift3Action/spm-build
   ```
 
+- Compile your Swift Action.
+  ```
+  swift build -c release
+  ```
+
+- Create the zip archive.
   ```
   zip /owexec/hello.zip .build/release/Action
   ```
-- Exit the Docker container
+
+- Exit the Docker container.
   ```
   exit
   ```
 
-This has created hello.zip in the same directory as hello.swift. 
--Upload it to OpenWhisk with the action name helloSwifty:
+  This has created hello.zip in the same directory as hello.swift.
+
+- Upload it to OpenWhisk with the action name helloSwifty:
   ```
-  wsk action update helloSwiftly hello.zip --kind swift:3
+  wsk action update helloSwiftly hello.zip --kind swift:3.1.1
   ```
 
-- To check how much faster it is, run 
+- To check how much faster it is, run
   ```
   wsk action invoke helloSwiftly --blocking
-  ``` 
+  ```
 
 
 The time it took for the action to run is in the "duration" property and compare to the time it takes to run with a compilation step in the hello action.
@@ -708,6 +758,7 @@ For example, create a Java file called `Hello.java` with the following content:
 
 ```java
 import com.google.gson.JsonObject;
+
 public class Hello {
     public static JsonObject main(JsonObject args) {
         String name = "stranger";
@@ -827,7 +878,7 @@ For the instructions that follow, assume that the Docker user ID is `janesmith` 
 
 
   ```
-  wsk action create --docker example janesmith/blackboxdemo
+  wsk action create example --docker janesmith/blackboxdemo
   ```
 
   Notice the use of `--docker` when creating an action. Currently all Docker images are assumed to be hosted on Docker Hub.
@@ -853,10 +904,29 @@ For the instructions that follow, assume that the Docker user ID is `janesmith` 
   ./buildAndPush.sh janesmith/blackboxdemo
   ```
   ```
-  wsk action update --docker example janesmith/blackboxdemo
+  wsk action update example --docker janesmith/blackboxdemo
   ```
 
   You can find more information about creating Docker actions in the [References](./reference.md#docker-actions) section.
+
+  *Note:* Previous version of the CLI supported `--docker` without a parameter and the image name was a positional argument.
+  In order to allow Docker actions to accept initialization data via a (zip) file, similar to other actions kinds, we have
+  normalized the user experience for Docker actions so that a positional argument if present must be a file (e.g., a zip file)
+  instead. The image name must be specified following the `--docker` option. Furthermore, due to user feedback, we have added
+  `--native` as shorthand for `--docker openwhisk/dockerskeleton` so that executables that run inside the standard Docker action
+  SDK are more convenient to create and deploy.
+
+  For example, the tutorial above created a binary executable inside the container locate at `/action/exec`. If you copy this file
+  to your local file system and zip it into `exec.zip` then you can use the following commands to create a docker action which receives
+  the executable as initialization data.
+
+  ```bash
+  wsk action create example exec.zip --native
+  ```
+  which is equivalent to the following command.
+  ```bash
+  wsk action create example exec.zip --docker openwhisk/dockerskeleton
+  ```
 
 ## Watching action output
 
@@ -869,7 +939,7 @@ You can use the OpenWhisk CLI to watch the output of actions as they are invoked
   wsk activation poll
   ```
 
-  This command starts a polling loop that continuously checks for logs from activations.
+This command starts a polling loop that continuously checks for logs from activations.
 
 2. Switch to another window and invoke an action:
 
@@ -898,7 +968,7 @@ You can list all the actions that you have created using:
 wsk action list
 ```
 
-As you write more actions, this list gets longer and it can be helpful to group related actions into [packages](./packages.md). To filter your list of actions to just the those within a specific pacakge, you can use: 
+As you write more actions, this list gets longer and it can be helpful to group related actions into [packages](./packages.md). To filter your list of actions to just the those within a specific pacakge, you can use:
 
 ```
 wsk action list [PACKAGE NAME]

@@ -1,21 +1,23 @@
-/**
- * Copyright 2015-2017 IBM Corporation
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
+ */
+
+/**
  * Route management action common API GW utilities
- *
- **/
+ */
 var request = require('request');
 var _ = require('lodash');
 
@@ -37,6 +39,7 @@ function addApiToGateway(gwInfo, spaceGuid, swaggerApi, apiId) {
   console.log('addApiToGateway: ');
   try {
   var options = {
+    followAllRedirects: true,
     url: gwInfo.gwUrl+'/'+encodeURIComponent(spaceGuid) + '/apis',
     json: swaggerApi,  // Use of json automatically sets header: 'Content-Type': 'application/json'
   };
@@ -96,6 +99,7 @@ function addApiToGateway(gwInfo, spaceGuid, swaggerApi, apiId) {
  */
 function deleteApiFromGateway(gwInfo, spaceGuid, apiId) {
   var options = {
+    followAllRedirects: true,
     url: gwInfo.gwUrl+'/'+encodeURIComponent(spaceGuid)+'/apis/'+encodeURIComponent(apiId),
     agentOptions: {rejectUnauthorized: false},
     headers: {
@@ -131,7 +135,7 @@ function deleteApiFromGateway(gwInfo, spaceGuid, apiId) {
   });
 }
 
-/*
+/**
  * Return an array of APIs
  */
 function getApis(gwInfo, spaceGuid, bpOrApiName) {
@@ -148,6 +152,7 @@ function getApis(gwInfo, spaceGuid, bpOrApiName) {
     }
   }
   var options = {
+    followAllRedirects: true,
     url: gwInfo.gwUrl+'/'+encodeURIComponent(spaceGuid)+'/apis',
     headers: {
       'Accept': 'application/json'
@@ -369,7 +374,7 @@ function generateBaseSwaggerApi(basepath, apiname) {
  */
 function addEndpointToSwaggerApi(swaggerApi, endpoint, responsetype) {
   var operation = endpoint.gatewayMethod.toLowerCase();
-  var operationId = operation + '_' + endpoint.gatewayPath;
+  var operationId = makeOperationId(operation, endpoint.gatewayPath);
   var responsetype = responsetype || 'json';
   console.log('addEndpointToSwaggerApi: operationid = '+operationId);
   try {
@@ -473,7 +478,7 @@ function removeEndpointFromSwaggerApi(swaggerApi, endpoint) {
       console.log('removeEndpointFromSwaggerApi: No operation; removing entire relpath '+relpath);
       if (swaggerApi.paths[relpath]) {
           for (var operation in swaggerApi.paths[relpath]) {
-            var operationId = operation + '_' + relpath;
+            var operationId = makeOperationId(operation, relpath);
             deleteActionOperationInvocationDetails(swaggerApi, operationId);
           }
           delete swaggerApi.paths[relpath];
@@ -482,7 +487,7 @@ function removeEndpointFromSwaggerApi(swaggerApi, endpoint) {
           return 'path \''+relpath+'\' does not exist in the API';
       }
   } else { // relpath and operation are specified, just delete the specific operation
-      var operationId = operation + '_' + relpath;
+      var operationId = makeOperationId(operation, relpath);
       if (swaggerApi.paths[relpath] && swaggerApi.paths[relpath][operation]) {
           delete swaggerApi.paths[relpath][operation];
           if (Object.keys(swaggerApi.paths[relpath]).length === 0) {
@@ -641,7 +646,6 @@ function getHostFromActionUrl(actionUrl) {
  *             result[1] : action name
  *             result[2] : ''
  *             result[3] : ''
-
  */
 function parseActionName(fqname) {
   console.log('parseActionName: parsing action: '+fqname);
@@ -840,6 +844,27 @@ function makeJsonString(x) {
   }
   return 'Unexpected JSON parsing failure';
 }
+
+/*
+ * Generate and return a swagger OperationId value
+ *
+ * Parameters
+ *   operation  - String. HTTP method (i.e. get, post, etc)
+ *   repath     - String. Swagger path value. The path relative to the base path
+ */
+function makeOperationId(operation, relpath) {
+   // Concatenate operation + relpath, stripping '/' and camelCasing after each '/' delimiter
+   // relpath special character handling in each path segment:
+   //   . ~ ! $ & ' ( ) * + , ; = : @ are removed and the following characters in the same path segment are camel cased
+   //   - _  are retained and the following characters in the same path segment are lower cased
+  return operation.toLowerCase() +
+         relpath.replace(/[^0-9a-z_-]/gi, ' ').replace(/\w\S*/g, function(word) {return makeCamelCase(word);}).replace(/\s/g, '');
+}
+
+function makeCamelCase(str) {
+  return str.charAt(0).toUpperCase() + str.substr(1).toLowerCase();
+}
+
 
 module.exports.getApis = getApis;
 module.exports.addApiToGateway = addApiToGateway;

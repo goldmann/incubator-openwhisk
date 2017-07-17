@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -426,10 +427,10 @@ class ApiGwRoutemgmtActionTests
     it should "reject routemgmt actions that are invoked with not enough parameters" in {
         val invalidArgs = Seq(
             //getApi
-            ("/whisk.system/routemgmt/getApi", ANY_ERROR_EXIT, "__ow_user is required", Seq()),
+            ("/whisk.system/routemgmt/getApi", ANY_ERROR_EXIT, "Invalid authentication.", Seq()),
 
             //deleteApi
-            ("/whisk.system/routemgmt/deleteApi", ANY_ERROR_EXIT, "__ow_user is required", Seq("-p", "basepath", "/ApiGwRoutemgmtActionTests_bp")),
+            ("/whisk.system/routemgmt/deleteApi", ANY_ERROR_EXIT, "Invalid authentication.", Seq("-p", "basepath", "/ApiGwRoutemgmtActionTests_bp")),
             ("/whisk.system/routemgmt/deleteApi", ANY_ERROR_EXIT, "basepath is required", Seq("-p", "__ow_user", "_")),
             ("/whisk.system/routemgmt/deleteApi", ANY_ERROR_EXIT, "When specifying an operation, the path is required",
                 Seq("-p", "__ow_user", "_", "-p", "basepath", "/ApiGwRoutemgmtActionTests_bp", "-p", "operation", "get")),
@@ -559,10 +560,10 @@ class ApiGwRoutemgmtActionTests
     it should "reject apimgmt actions that are invoked with not enough parameters" in {
         val invalidArgs = Seq(
             //getApi
-            ("/whisk.system/apimgmt/getApi", ANY_ERROR_EXIT, "__ow_user is required", Seq()),
+            ("/whisk.system/apimgmt/getApi", ANY_ERROR_EXIT, "Invalid authentication.", Seq()),
 
             //deleteApi
-            ("/whisk.system/apimgmt/deleteApi", ANY_ERROR_EXIT, "__ow_user is required", Seq("-p", "basepath", "/ApiGwRoutemgmtActionTests_bp")),
+            ("/whisk.system/apimgmt/deleteApi", ANY_ERROR_EXIT, "Invalid authentication.", Seq("-p", "basepath", "/ApiGwRoutemgmtActionTests_bp")),
             ("/whisk.system/apimgmt/deleteApi", ANY_ERROR_EXIT, "basepath is required", Seq("-p", "__ow_user", "_", "-p", "accesstoken", "TOKEN")),
             ("/whisk.system/apimgmt/deleteApi", ANY_ERROR_EXIT, "When specifying an operation, the path is required",
               Seq("-p", "__ow_user", "_", "-p", "accesstoken", "TOKEN", "-p", "basepath", "/ApiGwRoutemgmtActionTests_bp", "-p", "operation", "get")),

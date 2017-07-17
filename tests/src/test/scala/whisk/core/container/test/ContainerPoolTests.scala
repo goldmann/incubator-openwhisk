@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -40,11 +41,13 @@ import whisk.core.container.ContainerPool
 import whisk.core.entity.AuthKey
 import whisk.core.entity.EntityName
 import whisk.core.entity.EntityPath
-import whisk.core.entity.WhiskAction
+import whisk.core.entity.InstanceId
 import whisk.core.entity.WhiskAuthStore
 import whisk.core.entity.WhiskEntityStore
 import whisk.core.entity.test.ExecHelpers
 import whisk.utils.retry
+import whisk.core.entity.ExecutableWhiskAction
+import whisk.core.entity.CodeExec
 
 /**
  * Unit tests for ContainerPool and, by association, Container and WhiskContainer.
@@ -71,7 +74,7 @@ class ContainerPoolTests extends FlatSpec
 
     assert(config.isValid)
 
-    val pool = new ContainerPool(config, 0, true, true)
+    val pool = new ContainerPool(config, InstanceId(0), true, true)
     pool.logDir = "/tmp"
 
     val datastore = WhiskEntityStore.datastore(config)
@@ -225,9 +228,9 @@ class ContainerPoolTests extends FlatSpec
      * Create an action with the given name that print hello_N payload !
      * where N is specified.
      */
-    private def makeHelloAction(name: String, index: Integer): WhiskAction = {
+    private def makeHelloAction(name: String, index: Integer): ExecutableWhiskAction = {
         val code = """console.log('ABCXYZ'); function main(msg) { console.log('hello_${index}', msg.payload+'!');} """
-        WhiskAction(defaultNamespace, EntityName(name), jsDefault(code))
+        ExecutableWhiskAction(defaultNamespace, EntityName(name), jsDefault(code).asInstanceOf[CodeExec[String]])
     }
 
     it should "be able to start a nodejs action with init, do a run, return to pool, do another get testing reuse, another run" in {
@@ -250,9 +253,9 @@ class ContainerPoolTests extends FlatSpec
     /*
      * Create an action that will crash the container after succesfully returning
      */
-    private def makeCrashingAction(name: String, timeToLiveMs: Integer): WhiskAction = {
+    private def makeCrashingAction(name: String, timeToLiveMs: Integer): ExecutableWhiskAction = {
         val code = s"""function main(msg) { console.log('I expect you to die'); setTimeout(function(){ process.exit(1); }, ${timeToLiveMs}); }"""
-        WhiskAction(defaultNamespace, EntityName(name), jsDefault(code))
+        ExecutableWhiskAction(defaultNamespace, EntityName(name), jsDefault(code))
     }
 
     it should "cleanly handle a container that crashes" in {

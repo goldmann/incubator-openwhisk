@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,7 +28,6 @@ import org.apache.kafka.common.errors.RecordTooLargeException
 
 import akka.actor.ActorSystem
 import spray.http.HttpMethod
-import spray.http.HttpMethods._
 import spray.http.StatusCodes._
 import spray.httpx.SprayJsonSupport._
 import spray.httpx.unmarshalling._
@@ -36,7 +36,6 @@ import spray.json.DefaultJsonProtocol._
 import spray.routing.RequestContext
 import whisk.common.TransactionId
 import whisk.core.WhiskConfig
-import whisk.core.controller.actions.BlockingInvokeTimeout
 import whisk.core.controller.actions.PostActionActivation
 import whisk.core.database.NoDocumentException
 import whisk.core.entitlement._
@@ -58,7 +57,10 @@ object WhiskActionsApi {
     /** Grace period after action timeout limit to poll for result. */
     protected[core] val blockingInvokeGrace = 5 seconds
 
-    /** Max duration to wait for a blocking activation. */
+    /**
+     * Max duration to wait for a blocking activation.
+     * This is the default timeout on a POST request.
+     */
     protected[core] val maxWaitForBlockingActivation = 60 seconds
 }
 
@@ -130,24 +132,19 @@ trait WhiskActionsApi
                         // matched /namespace/collection/package-name/action-name
                         // this is an action in a named package
                         val packageDocId = FullyQualifiedEntityName(ns, EntityName(outername)).toDocId
-                        val packageResource = Resource(ns, Collection(Collection.PACKAGES), Some(outername))
+                        val packageResource = Resource(ns.addPath(EntityName(outername)), collection, Some(innername))
 
-                        val right = if (m == GET || m == POST) Privilege.READ else collection.determineRight(m, Some(innername))
+                        val right = collection.determineRight(m, Some(innername))
                         onComplete(entitlementProvider.check(user, right, packageResource)) {
                             case Success(_) =>
                                 getEntity(WhiskPackage, entityStore, packageDocId, Some {
-                                    if (right == Privilege.READ) {
+                                    if (right == Privilege.READ || right == Privilege.ACTIVATE) {
                                         // need to merge package with action, hence authorize subject for package
                                         // access (if binding, then subject must be authorized for both the binding
                                         // and the referenced package)
                                         //
                                         // NOTE: it is an error if either the package or the action does not exist,
                                         // the former manifests as unauthorized and the latter as not found
-                                        //
-                                        // a GET (READ) and POST (ACTIVATE) resolve to a READ right on the package;
-                                        // it may be desirable to separate these but currently the PACKAGES collection
-                                        // does not allow ACTIVATE since it does not make sense to activate a package
-                                        // but rather an action in the package
                                         mergeActionWithPackageAndDispatch(m, user, EntityName(innername)) _
                                     } else {
                                         // these packaged action operations do not need merging with the package,
@@ -220,11 +217,12 @@ trait WhiskActionsApi
                         onComplete(entitleReferencedEntities(user, Privilege.ACTIVATE, Some(action.exec))) {
                             case Success(_) =>
                                 val actionWithMergedParams = env.map(action.inherit(_)) getOrElse action
-                                onComplete(invokeAction(user, actionWithMergedParams, payload, blocking, Some(waitOverride))) {
-                                    case Success((activationId, None)) =>
+                                val waitForResponse = if (blocking) Some(waitOverride) else None
+                                onComplete(invokeAction(user, actionWithMergedParams, payload, waitForResponse, cause = None)) {
+                                    case Success(Left(activationId)) =>
                                         // non-blocking invoke or blocking invoke which got queued instead
                                         complete(Accepted, activationId.toJsObject)
-                                    case Success((activationId, Some(activation))) =>
+                                    case Success(Right(activation)) =>
                                         val response = if (result) activation.resultAsJson else activation.toExtendedJson
 
                                         if (activation.response.isSuccess) {
@@ -242,9 +240,6 @@ trait WhiskActionsApi
                                         } else {
                                             complete(InternalServerError, response)
                                         }
-                                    case Failure(t: BlockingInvokeTimeout) =>
-                                        logging.info(this, s"[POST] action activation waiting period expired")
-                                        complete(Accepted, t.activationId.toJsObject)
                                     case Failure(t: RecordTooLargeException) =>
                                         logging.info(this, s"[POST] action payload was too large")
                                         terminate(RequestEntityTooLarge)

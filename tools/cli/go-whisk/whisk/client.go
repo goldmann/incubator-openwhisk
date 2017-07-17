@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -224,7 +225,7 @@ func (c *Client) Do(req *http.Request, v interface{}, ExitWithErrorOnTimeout boo
         fmt.Printf("[%s]\t%s\n", req.Method, req.URL)
         if len(req.Header) > 0 {
             fmt.Println("Req Headers")
-            printJSON(req.Header)
+            PrintJSON(req.Header)
         }
         if req.Body != nil {
             fmt.Println("Req Body")
@@ -246,7 +247,7 @@ func (c *Client) Do(req *http.Request, v interface{}, ExitWithErrorOnTimeout boo
     Verbose("Got response with code %d\n", resp.StatusCode)
     if (IsVerbose() && len(resp.Header) > 0) {
         fmt.Println("Resp Headers")
-        printJSON(resp.Header)
+        PrintJSON(resp.Header)
     }
 
     // Read the response body

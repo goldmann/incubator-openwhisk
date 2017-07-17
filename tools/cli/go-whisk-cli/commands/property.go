@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -67,7 +68,7 @@ var propertySetCmd = &cobra.Command{
         var werr *whisk.WskError = nil
 
         // get current props
-        props, err := readProps(Properties.PropsFile)
+        props, err := ReadProps(Properties.PropsFile)
         if err != nil {
             whisk.Debug(whisk.DbgError, "readProps(%s) failed: %s\n", Properties.PropsFile, err)
             errStr := wski18n.T("Unable to set the property value: {{.err}}", map[string]interface{}{"err": err})
@@ -145,7 +146,7 @@ var propertySetCmd = &cobra.Command{
             }
         }
 
-        err = writeProps(Properties.PropsFile, props)
+        err = WriteProps(Properties.PropsFile, props)
         if err != nil {
             whisk.Debug(whisk.DbgError, "writeProps(%s, %#v) failed: %s\n", Properties.PropsFile, props, err)
             errStr := fmt.Sprintf(
@@ -171,7 +172,7 @@ var propertyUnsetCmd = &cobra.Command{
     SilenceErrors:  true,
     RunE: func(cmd *cobra.Command, args []string) error {
         var okMsg string = ""
-        props, err := readProps(Properties.PropsFile)
+        props, err := ReadProps(Properties.PropsFile)
         if err != nil {
             whisk.Debug(whisk.DbgError, "readProps(%s) failed: %s\n", Properties.PropsFile, err)
             errStr := fmt.Sprintf(
@@ -227,7 +228,7 @@ var propertyUnsetCmd = &cobra.Command{
             }
         }
 
-        err = writeProps(Properties.PropsFile, props)
+        err = WriteProps(Properties.PropsFile, props)
         if err != nil {
             whisk.Debug(whisk.DbgError, "writeProps(%s, %#v) failed: %s\n", Properties.PropsFile, props, err)
             errStr := fmt.Sprintf(
@@ -348,7 +349,7 @@ func setDefaultProperties() {
     // Properties.CLIVersion value is set from main's init()
 }
 
-func getPropertiesFilePath() (propsFilePath string, werr error) {
+func GetPropertiesFilePath() (propsFilePath string, werr error) {
     var envExists bool
 
     // Environment variable overrides the default properties file path
@@ -380,16 +381,16 @@ func loadProperties() error {
 
     setDefaultProperties()
 
-    Properties.PropsFile, err = getPropertiesFilePath()
+    Properties.PropsFile, err = GetPropertiesFilePath()
     if err != nil {
         return nil
-        //whisk.Debug(whisk.DbgError, "getPropertiesFilePath() failed: %s\n", err)
+        //whisk.Debug(whisk.DbgError, "GetPropertiesFilePath() failed: %s\n", err)
         //errStr := fmt.Sprintf("Unable to load the properties file: %s", err)
         //werr := whisk.MakeWskError(errors.New(errStr), whisk.EXITCODE_ERR_GENERAL, whisk.DISPLAY_MSG, whisk.NO_DISPLAY_USAGE)
         //return werr
     }
 
-    props, err := readProps(Properties.PropsFile)
+    props, err := ReadProps(Properties.PropsFile)
     if err != nil {
         whisk.Debug(whisk.DbgError, "readProps(%s) failed: %s\n", Properties.PropsFile, err)
         errStr := wski18n.T("Unable to read the properties file '{{.filename}}': {{.err}}",

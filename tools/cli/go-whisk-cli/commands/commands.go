@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,7 +19,6 @@ package commands
 
 import (
     "errors"
-    "fmt"
     "net/http"
     "os"
 
@@ -74,14 +74,7 @@ func setupClientConfig(cmd *cobra.Command, args []string) (error){
 }
 
 func init() {
-    var err error
 
-    err = loadProperties()
-    if err != nil {
-        whisk.Debug(whisk.DbgError, "loadProperties() error: %s\n", err)
-        fmt.Println(err)
-        os.Exit(whisk.EXITCODE_ERR_GENERAL)
-    }
 }
 
 func getKeyValueArgs(args []string, argIndex int, parsedArgs []string) ([]string, []string, error) {
@@ -205,6 +198,15 @@ func Execute() error {
     if err != nil {
         whisk.Debug(whisk.DbgError, "parseParams(%s) failed: %s\n", os.Args, err)
         errMsg := wski18n.T("Failed to parse arguments: {{.err}}", map[string]interface{}{"err":err})
+        whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXITCODE_ERR_GENERAL,
+            whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
+        return whiskErr
+    }
+
+    err = loadProperties()
+    if err != nil {
+        whisk.Debug(whisk.DbgError, "loadProperties() error: %s\n", err)
+        errMsg := wski18n.T("Unable to access configuration properties: {{.err}}", map[string]interface{}{"err":err})
         whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXITCODE_ERR_GENERAL,
             whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
         return whiskErr

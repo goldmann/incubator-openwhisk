@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -69,12 +70,6 @@ class DatastoreTests extends FlatSpec
     }
 
     behavior of "Datastore"
-
-    it should "CRD auth" in {
-        implicit val tid = transid()
-        val auth = WhiskAuth(Subject(), AuthKey())
-        putGetCheck(authstore, auth, WhiskAuth)
-    }
 
     it should "CRD action blackbox" in {
         implicit val tid = transid()
@@ -177,14 +172,6 @@ class DatastoreTests extends FlatSpec
         }
     }
 
-    it should "update auth with a revision" in {
-        implicit val tid = transid()
-        val auth = WhiskAuth(Subject(), AuthKey())
-        val docinfo = putGetCheck(authstore, auth, WhiskAuth, false)._2.docinfo
-        val revAuth = auth.revoke.revision[WhiskAuth](docinfo.rev)
-        putGetCheck(authstore, revAuth, WhiskAuth)
-    }
-
     it should "update action with a revision" in {
         implicit val tid = transid()
         implicit val basename = EntityName("update action")
@@ -220,15 +207,6 @@ class DatastoreTests extends FlatSpec
         val docinfo = putGetCheck(datastore, activation, WhiskActivation, false)._2.docinfo
         val revActivation = WhiskActivation(namespace, aname, activation.subject, activation.activationId, start = Instant.now, end = Instant.now).revision[WhiskActivation](docinfo.rev)
         putGetCheck(datastore, revActivation, WhiskActivation)
-    }
-
-    it should "fail with document conflict when trying to write the same auth twice without a revision" in {
-        implicit val tid = transid()
-        val auth = WhiskAuth(Subject(), AuthKey())
-        putGetCheck(authstore, auth, WhiskAuth)
-        intercept[DocumentConflictException] {
-            putGetCheck(authstore, auth, WhiskAuth)
-        }
     }
 
     it should "fail with document conflict when trying to write the same action twice without a revision" in {
@@ -269,17 +247,6 @@ class DatastoreTests extends FlatSpec
         putGetCheck(datastore, activation, WhiskActivation)
         intercept[DocumentConflictException] {
             putGetCheck(datastore, activation, WhiskActivation)
-        }
-    }
-
-    it should "fail with document does not exist when trying to delete the same auth twice" in {
-        implicit val tid = transid()
-        val auth = WhiskAuth(Subject(), AuthKey())
-        val doc = putGetCheck(authstore, auth, WhiskAuth, false)._1
-        assert(Await.result(WhiskAuth.del(authstore, doc), dbOpTimeout))
-        intercept[NoDocumentException] {
-            assert(Await.result(WhiskAuth.del(authstore, doc), dbOpTimeout))
-            assert(false)
         }
     }
 

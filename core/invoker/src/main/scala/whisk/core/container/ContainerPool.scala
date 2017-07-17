@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -51,7 +52,7 @@ import whisk.core.entity._
  */
 class ContainerPool(
     config: WhiskConfig,
-    invokerInstance: Integer = 0,
+    invokerInstance: InstanceId = InstanceId(0),
     standalone: Boolean = false,
     saveContainerLog: Boolean = false)(implicit actorSystem: ActorSystem, val logging: Logging)
     extends ContainerUtils {
@@ -168,7 +169,7 @@ class ContainerPool(
      * The invariant of returning the container back to the pool holds regardless of whether init succeeded or not.
      * In case of failure to start a container (or for failed docker operations e.g., pull), an exception is thrown.
      */
-    def getAction(action: WhiskAction, auth: AuthKey)(implicit transid: TransactionId): (WhiskContainer, Option[RunResult]) = {
+    def getAction(action: ExecutableWhiskAction, auth: AuthKey)(implicit transid: TransactionId): (WhiskContainer, Option[RunResult]) = {
         if (shuttingDown) {
             logging.info(this, s"Shutting down: Not getting container for ${action.fullyQualifiedName(true)} with ${auth.uuid}")
             throw new Exception("system is shutting down")
@@ -428,9 +429,9 @@ class ContainerPool(
 
     // Sample container name: wsk1_1_joeibmcomhelloWorldDemo_20150901T202701852Z
     private def makeContainerName(localName: String): ContainerName =
-        ContainerCounter.containerName(invokerInstance.toString(), localName)
+        ContainerCounter.containerName(invokerInstance.toInt.toString, localName)
 
-    private def makeContainerName(action: WhiskAction): ContainerName =
+    private def makeContainerName(action: ExecutableWhiskAction): ContainerName =
         makeContainerName(action.fullyQualifiedName(true).toString)
 
     /**
@@ -560,7 +561,7 @@ class ContainerPool(
         }
 
     // Obtain a container (by creation or promotion) and initialize by sending code.
-    private def makeWhiskContainer(action: WhiskAction, auth: AuthKey)(implicit transid: TransactionId): WhiskContainer = {
+    private def makeWhiskContainer(action: ExecutableWhiskAction, auth: AuthKey)(implicit transid: TransactionId): WhiskContainer = {
         val imageName = getDockerImageName(action)
         val limits = action.limits
         val nodeImageName = NODEJS6_IMAGE.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
@@ -623,11 +624,9 @@ class ContainerPool(
     }
 
     // We send the payload here but eventually must also handle morphing a pre-allocated container into the right state.
-    private def initWhiskContainer(action: WhiskAction, con: WhiskContainer)(implicit transid: TransactionId): RunResult = {
-        // only Exec instances that are subtypes of CodeExec reach the invoker
-        val Some(initArg) = action.containerInitializer
+    private def initWhiskContainer(action: ExecutableWhiskAction, con: WhiskContainer)(implicit transid: TransactionId): RunResult = {
         // Then send it the init payload which is code for now
-        con.init(initArg, action.limits.timeout.duration)
+        con.init(action.containerInitializer, action.limits.timeout.duration)
     }
 
     /**
@@ -658,12 +657,11 @@ class ContainerPool(
         logging.debug(this, s"$prefix: keyMap = ${keyMapToString()}")
     }
 
-    private def getDockerImageName(action: WhiskAction)(implicit transid: TransactionId): String = {
+    private def getDockerImageName(action: ExecutableWhiskAction)(implicit transid: TransactionId): String = {
         // only Exec instances that are subtypes of CodeExec reach the invoker
-        val exec = action.exec.asInstanceOf[CodeExec[_]]
-        val imageName = if (!exec.pull) {
-            exec.image.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
-        } else exec.image.publicImageName
+        val imageName = if (!action.exec.pull) {
+            action.exec.image.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
+        } else action.exec.image.publicImageName
         logging.debug(this, s"Using image ${imageName}")
         imageName
     }

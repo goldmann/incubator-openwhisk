@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,7 +28,6 @@ import org.scalatest.FlatSpec
 import org.scalatest.Matchers
 
 import common.StreamLogging
-import spray.http.BasicHttpCredentials
 import spray.json.DefaultJsonProtocol
 import spray.json.JsString
 import spray.routing.HttpService
@@ -36,8 +36,8 @@ import whisk.common.TransactionCounter
 import whisk.common.TransactionId
 import whisk.core.WhiskConfig
 import whisk.core.connector.ActivationMessage
-import whisk.core.controller.WhiskServices
 import whisk.core.controller.RestApiCommons
+import whisk.core.controller.WhiskServices
 import whisk.core.database.DocumentFactory
 import whisk.core.database.test.DbUtils
 import whisk.core.entitlement._
@@ -57,6 +57,10 @@ protected trait ControllerTestCommon
     with WhiskServices
     with HttpService
     with StreamLogging {
+
+    override val instance = InstanceId(0)
+    override val numberOfInstances = 1
+    val activeAckTopicIndex = InstanceId(0)
 
     override val actorRefFactory = null
     implicit val routeTestTimeout = RouteTestTimeout(90 seconds)
@@ -85,16 +89,6 @@ protected trait ControllerTestCommon
     val entityStore = WhiskEntityStore.datastore(whiskConfig)
     val activationStore = WhiskActivationStore.datastore(whiskConfig)
     val authStore = WhiskAuthStore.datastore(whiskConfig)
-    val authStoreV2 = WhiskAuthV2Store.datastore(whiskConfig)
-
-    def createTempCredentials(implicit transid: TransactionId) = {
-        val subject = Subject()
-        val key = AuthKey()
-        val auth = WhiskAuthV2.withDefaultNamespace(subject, key)
-        put(authStoreV2, auth)
-        waitOnView(authStore, key, 1)
-        (subject.toIdentity(key), BasicHttpCredentials(key.uuid.asString, key.key.asString))
-    }
 
     def deleteAction(doc: DocId)(implicit transid: TransactionId) = {
         Await.result(WhiskAction.get(entityStore, doc) flatMap { doc =>
@@ -121,13 +115,6 @@ protected trait ControllerTestCommon
         Await.result(WhiskRule.get(entityStore, doc) flatMap { doc =>
             logging.info(this, s"deleting ${doc.docinfo}")
             WhiskRule.del(entityStore, doc.docinfo)
-        }, dbOpTimeout)
-    }
-
-    def deleteAuth(doc: DocId)(implicit transid: TransactionId) = {
-        Await.result(WhiskAuth.get(authStore, doc) flatMap { doc =>
-            logging.info(this, s"deleting ${doc.docinfo}")
-            WhiskAuth.del(authStore, doc.docinfo)
         }, dbOpTimeout)
     }
 
@@ -194,9 +181,9 @@ class DegenerateLoadBalancerService(config: WhiskConfig)(implicit ec: ExecutionC
     // unit tests that need an activation via active ack/fast path should set this to value expected
     var whiskActivationStub: Option[(FiniteDuration, WhiskActivation)] = None
 
-    override def getActiveUserActivationCounts: Map[String, Int] = Map()
+    override def getActiveNamespaceActivationCounts: Map[UUID, Int] = Map.empty
 
-    override def publish(action: WhiskAction, msg: ActivationMessage, timeout: FiniteDuration)(implicit transid: TransactionId): Future[Future[WhiskActivation]] =
+    override def publish(action: ExecutableWhiskAction, msg: ActivationMessage)(implicit transid: TransactionId): Future[Future[Either[ActivationId, WhiskActivation]]] =
         Future.successful {
             whiskActivationStub map {
                 case (timeout, activation) => Future {
@@ -205,7 +192,7 @@ class DegenerateLoadBalancerService(config: WhiskConfig)(implicit ec: ExecutionC
                         Thread.sleep(timeout.toMillis)
                         println(".... done waiting")
                     }
-                    activation
+                    Right(activation)
                 }
             } getOrElse Future.failed(new IllegalArgumentException("Unit test does not need fast path"))
         }

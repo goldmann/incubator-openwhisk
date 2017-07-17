@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -31,7 +32,9 @@ const WEB_FLAG      = "web"
 
 var cliDebug = os.Getenv("WSK_CLI_DEBUG")  // Useful for tracing init() code
 
-var flags struct {
+var flags Flags
+
+type Flags struct {
 
     global struct {
         verbose     bool
@@ -48,10 +51,10 @@ var flags struct {
         annotFile   string
         param       []string
         paramFile   string
-        shared      string // AKA "public" or "publish"
-        skip        int  // skip first N records
-        limit       int  // return max N records
-        full        bool // return full records (docs=true for client request)
+        shared      string  // AKA "public" or "publish"
+        skip        int     // skip first N records
+        limit       int     // return max N records
+        full        bool    // return full records (docs=true for client request)
         summary     bool
         feed        string  // name of feed
         detail      bool
@@ -73,19 +76,7 @@ var flags struct {
         namespaceSet    string
     }
 
-    action struct {
-        docker      bool
-        copy        bool
-        pipe        bool
-        web         string
-        sequence    bool
-        timeout     int
-        memory      int
-        logsize     int
-        result      bool
-        kind        string
-        main        string
-    }
+    action ActionFlags
 
     activation struct {
         action          string // retrieve results for this action
@@ -97,6 +88,7 @@ var flags struct {
         sinceHours      int
         sinceDays       int
         exit            int
+        last            bool
     }
 
     // rule
@@ -120,6 +112,22 @@ var flags struct {
         configfile string
         resptype   string
     }
+}
+
+
+type ActionFlags struct {
+    docker      string
+    native      bool
+    copy        bool
+    web         string
+    sequence    bool
+    timeout     int
+    memory      int
+    logsize     int
+    result      bool
+    kind        string
+    main        string
+    url         bool
 }
 
 func IsVerbose() bool {

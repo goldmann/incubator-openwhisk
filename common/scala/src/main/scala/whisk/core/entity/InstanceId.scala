@@ -15,21 +15,14 @@
  * limitations under the License.
  */
 
-package system.basic
+package whisk.core.entity
 
-import org.junit.runner.RunWith
-import org.scalatest.junit.JUnitRunner
+import spray.json.DefaultJsonProtocol
 
-import common.JsHelpers
-import common.WskTestHelpers
+case class InstanceId(val instance: Int) {
+    def toInt: Int = instance
+}
 
-@RunWith(classOf[JUnitRunner])
-class WskUnicodeSwiftTests
-    extends WskUnicodeTests
-    with WskTestHelpers
-    with JsHelpers {
-
-    override lazy val actionKind = "swift:3"
-    override lazy val actionSource = "unicode.swift"
-
+object InstanceId extends DefaultJsonProtocol {
+    implicit val serdes = jsonFormat1(InstanceId.apply)
 }

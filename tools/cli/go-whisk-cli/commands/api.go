@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -606,19 +607,13 @@ func parseApi(cmd *cobra.Command, args []string) (*whisk.Api, error) {
     }
 
     // Is the specified action name valid?
-    var qName QualifiedName
+    var qualifiedName QualifiedName
     if (len(args) == 3) {
-        qName = QualifiedName{}
-        qName, err = parseQualifiedName(args[2])
-        if err != nil {
-            whisk.Debug(whisk.DbgError, "parseQualifiedName(%s) failed: %s\n", args[2], err)
-            errMsg := wski18n.T("'{{.name}}' is not a valid action name: {{.err}}",
-                map[string]interface{}{"name": args[2], "err": err})
-            whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXITCODE_ERR_GENERAL,
-                whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
-            return nil, whiskErr
+        if qualifiedName, err = parseQualifiedName(args[2]); err != nil {
+            return nil, parseQualifiedNameError(args[2], err)
         }
-        if (qName.entityName == "") {
+
+        if (qualifiedName.entityName == "") {
             whisk.Debug(whisk.DbgError, "Action name '%s' is invalid\n", args[2])
             errMsg := wski18n.T("'{{.name}}' is not a valid action name.", map[string]interface{}{"name": args[2]})
             whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXITCODE_ERR_GENERAL,
@@ -641,10 +636,10 @@ func parseApi(cmd *cobra.Command, args []string) (*whisk.Api, error) {
 
     api.Namespace = client.Config.Namespace
     api.Action = new(whisk.ApiAction)
-    api.Action.BackendUrl = "https://" + client.Config.Host + "/api/v1/namespaces/" + qName.namespace + "/actions/" + qName.entityName
+    api.Action.BackendUrl = "https://" + client.Config.Host + "/api/v1/namespaces/" + qualifiedName.namespace + "/actions/" + qualifiedName.entityName
     api.Action.BackendMethod = "POST"
-    api.Action.Name = qName.entityName
-    api.Action.Namespace = qName.namespace
+    api.Action.Name = qualifiedName.entityName
+    api.Action.Namespace = qualifiedName.namespace
     api.Action.Auth = client.Config.AuthToken
     api.ApiName = apiname
     api.GatewayBasePath = basepath
@@ -869,21 +864,34 @@ var apiCreateCmdV2 = &cobra.Command{
                 for op, opv  := range retApi.Swagger.Paths[path] {
                     whisk.Debug(whisk.DbgInfo, "Path operation: %s\n", op)
                     var fqActionName string
-                    if (len(opv.XOpenWhisk.Package) > 0) {
+                    if (opv.XOpenWhisk == nil) {
+                        fqActionName = ""
+                    } else if (len(opv.XOpenWhisk.Package) > 0) {
                         fqActionName = "/"+opv.XOpenWhisk.Namespace+"/"+opv.XOpenWhisk.Package+"/"+opv.XOpenWhisk.ActionName
                     } else {
                         fqActionName = "/"+opv.XOpenWhisk.Namespace+"/"+opv.XOpenWhisk.ActionName
                     }
                     whisk.Debug(whisk.DbgInfo, "baseUrl %s  Path %s  Path obj %+v\n", baseUrl, path, opv)
-                    fmt.Fprintf(color.Output,
-                        wski18n.T("{{.ok}} created API {{.path}} {{.verb}} for action {{.name}}\n{{.fullpath}}\n",
-                            map[string]interface{}{
-                                "ok": color.GreenString("ok:"),
-                                "path": strings.TrimSuffix(retApi.Swagger.BasePath, "/") + path,
-                                "verb": op,
-                                "name": boldString(fqActionName),
-                                "fullpath": managedUrl,
-                            }))
+                    if len(fqActionName) > 0 {
+                        fmt.Fprintf(color.Output,
+                            wski18n.T("{{.ok}} created API {{.path}} {{.verb}} for action {{.name}}\n{{.fullpath}}\n",
+                                map[string]interface{}{
+                                    "ok": color.GreenString("ok:"),
+                                    "path": strings.TrimSuffix(retApi.Swagger.BasePath, "/") + path,
+                                    "verb": op,
+                                    "name": boldString(fqActionName),
+                                    "fullpath": managedUrl,
+                                }))
+                    } else {
+                        fmt.Fprintf(color.Output,
+                            wski18n.T("{{.ok}} created API {{.path}} {{.verb}}\n{{.fullpath}}\n",
+                                map[string]interface{}{
+                                    "ok": color.GreenString("ok:"),
+                                    "path": strings.TrimSuffix(retApi.Swagger.BasePath, "/") + path,
+                                    "verb": op,
+                                    "fullpath": managedUrl,
+                                }))
+                    }
                 }
             }
         }
@@ -1223,7 +1231,9 @@ func printFilteredListApiV2(resultApi *whisk.RetApiV2, apiPath string, apiVerb s
                     if ( len(apiVerb) == 0 || strings.ToLower(op) == strings.ToLower(apiVerb)) {
                         whisk.Debug(whisk.DbgInfo, "printFilteredListApiV2: operation matches: %#v\n", opv)
                         var actionName string
-                        if (len(opv.XOpenWhisk.Package) > 0) {
+                        if (opv.XOpenWhisk == nil) {
+                            actionName = ""
+                        } else if (len(opv.XOpenWhisk.Package) > 0) {
                             actionName = "/"+opv.XOpenWhisk.Namespace+"/"+opv.XOpenWhisk.Package+"/"+opv.XOpenWhisk.ActionName
                         } else {
                             actionName = "/"+opv.XOpenWhisk.Namespace+"/"+opv.XOpenWhisk.ActionName
@@ -1261,7 +1271,9 @@ func printFilteredListRowV2(resultApi *whisk.RetApiV2, apiPath string, apiVerb s
                     if ( len(apiVerb) == 0 || strings.ToLower(op) == strings.ToLower(apiVerb)) {
                         whisk.Debug(whisk.DbgInfo, "printFilteredListRowV2: operation matches: %#v\n", opv)
                         var actionName string
-                        if (len(opv.XOpenWhisk.Package) > 0) {
+                        if (opv.XOpenWhisk == nil) {
+                            actionName = ""
+                        } else if (len(opv.XOpenWhisk.Package) > 0) {
                             actionName = "/"+opv.XOpenWhisk.Namespace+"/"+opv.XOpenWhisk.Package+"/"+opv.XOpenWhisk.ActionName
                         } else {
                             actionName = "/"+opv.XOpenWhisk.Namespace+"/"+opv.XOpenWhisk.ActionName
@@ -1292,7 +1304,9 @@ func getLargestActionNameSizeV2(retApiArray *whisk.RetApiArrayV2, apiPath string
                         if ( len(apiVerb) == 0 || strings.ToLower(op) == strings.ToLower(apiVerb)) {
                             whisk.Debug(whisk.DbgInfo, "getLargestActionNameSize: operation matches: %#v\n", opv)
                             var fullActionName string
-                            if (len(opv.XOpenWhisk.Package) > 0) {
+                            if (opv.XOpenWhisk == nil) {
+                                fullActionName = ""
+                            } else if (len(opv.XOpenWhisk.Package) > 0) {
                                 fullActionName = "/"+opv.XOpenWhisk.Namespace+"/"+opv.XOpenWhisk.Package+"/"+opv.XOpenWhisk.ActionName
                             } else {
                                 fullActionName = "/"+opv.XOpenWhisk.Namespace+"/"+opv.XOpenWhisk.ActionName
@@ -1510,7 +1524,7 @@ func getAccessToken() (string, error) {
     var token string = "DUMMY TOKEN"
     var err error
 
-    props, err := readProps(Properties.PropsFile)
+    props, err := ReadProps(Properties.PropsFile)
     if err == nil {
         if len(props["APIGW_ACCESS_TOKEN"]) > 0 {
             token = props["APIGW_ACCESS_TOKEN"]
@@ -1528,7 +1542,7 @@ func getUserContextId() (string, error) {
     var guid string
     var err error
 
-    props, err := readProps(Properties.PropsFile)
+    props, err := ReadProps(Properties.PropsFile)
     if err == nil {
         if len(props["AUTH"]) > 0 {
             guid = strings.Split(props["AUTH"], ":")[0]
