@@ -178,7 +178,7 @@ object Controller {
 
         // if deploying multiple instances (scale out), must pass the instance number as the
         // second argument.  (TODO .. seems fragile)
-        val instance = if (args.length > 0) args(1).toInt else 0
+        val instance = if (args.length > 0) args(0).toInt else 0
 
         // initialize the runtimes manifest
         if (config.isValid && ExecManifest.initialize(config)) {
