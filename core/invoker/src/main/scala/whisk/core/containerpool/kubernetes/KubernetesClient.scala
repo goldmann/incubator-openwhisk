@@ -17,6 +17,7 @@
 package whisk.core.containerpool.kubernetes
 
 import java.io.FileNotFoundException
+import java.net.URL
 import java.nio.file.Files
 import java.nio.file.Paths
 
@@ -31,12 +32,17 @@ import whisk.core.invoker.ActionLogDriver
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
+import scala.concurrent.blocking
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
 
 import spray.json._
 import spray.json.DefaultJsonProtocol._
+
+import io.fabric8.kubernetes.client.DefaultKubernetesClient
+import io.fabric8.kubernetes.client.utils.URLUtils
+import okhttp3.Request
 
 /**
   * Serves as interface to the kubectl CLI tool.
@@ -49,6 +55,7 @@ import spray.json.DefaultJsonProtocol._
 class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Logging)
         extends KubernetesApi with ProcessRunner {
     implicit private val ec = executionContext
+    implicit private val kubeRestClient = new DefaultKubernetesClient
 
     // Determines how to run kubectl. Failure to find a kubectl binary implies
     // a failure to initialize this instance of KubernetesClient.
@@ -88,8 +95,22 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
         runCmd("delete", "--now", "pod", "-l", s"$key=$value").map(_ => ())
 
     def logs(id: ContainerId, sinceTime: String)(implicit transid: TransactionId): Future[String] = {
-        val args = Seq("logs", "--timestamps", id.asString) ++ (if (sinceTime.isEmpty) None else Seq("--since-time", sinceTime))
-        runCmd(args: _*).map { output =>
+        Future {
+            blocking {
+                val sinceTimePart = if (!sinceTime.isEmpty) {
+                    s"&sinceTime=${sinceTime}"
+                } else ""
+                val url = new URL(URLUtils.join(kubeRestClient.getMasterUrl.toString,
+                    "api", "v1", "namespaces", kubeRestClient.getNamespace,
+                    "pods", id.asString, "log?timestamps=true" ++ sinceTimePart))
+                val request = new Request.Builder().get().url(url).build
+                val response = kubeRestClient.getHttpClient.newCall(request).execute
+                if (!response.isSuccessful) {
+                    Future.failed(new Exception(s"Kubernetes API returned HTTP status ${response.code} when trying to retrieve pod logs"))
+                }
+                response.body.string
+            }
+        }.map { output =>
             val original = output.lines.toSeq
             val relevant = original.dropWhile(s => !s.startsWith(sinceTime))
             val result =
