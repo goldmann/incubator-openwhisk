@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -40,8 +41,8 @@ import spray.json.DefaultJsonProtocol._
 import spray.routing.Directives
 import spray.routing.RequestContext
 import spray.routing.Route
+import spray.http.HttpMethods.{ OPTIONS, GET, DELETE, POST, PUT, HEAD, PATCH }
 import whisk.common.TransactionId
-import whisk.core.controller.actions.BlockingInvokeTimeout
 import whisk.core.controller.actions.PostActionActivation
 import whisk.core.database._
 import whisk.core.entity._
@@ -317,6 +318,11 @@ trait WhiskWebActionsApi
     private lazy val validNameSegment = pathPrefix(EntityName.REGEX.r)
     private lazy val packagePrefix = pathPrefix("default".r | EntityName.REGEX.r)
 
+    private val defaultCorsResponse = List(
+        `Access-Control-Allow-Origin`(AllOrigins),
+        `Access-Control-Allow-Methods`(OPTIONS, GET, DELETE, POST, PUT, HEAD, PATCH),
+        `Access-Control-Allow-Headers`(`Authorization`.name, `Content-Type`.name))
+
     /** Extracts the HTTP method, headers, query params and unmatched (remaining) path. */
     private val requestMethodParamsAndPath = {
         extract { ctx =>
@@ -330,6 +336,8 @@ trait WhiskWebActionsApi
 
     def routes(user: Identity)(implicit transid: TransactionId): Route = routes(Some(user))
     def routes()(implicit transid: TransactionId): Route = routes(None)
+
+    private val maxWaitForWebActionResult = Some(WhiskActionsApi.maxWaitForBlockingActivation)
 
     /**
      * Adds route to web based activations. Actions invoked this way are anonymous in that the
@@ -407,7 +415,17 @@ trait WhiskWebActionsApi
                             provide(fullyQualifiedActionName(actionName)) { fullActionName =>
                                 onComplete(verifyWebAction(fullActionName, onBehalfOf.isDefined)) {
                                     case Success((actionOwnerIdentity, action)) =>
-                                        extractEntityAndProcessRequest(actionOwnerIdentity, action, extension, onBehalfOf, context, e)
+                                        if (!action.annotations.asBool("web-custom-options").exists(identity)) {
+                                            respondWithHeaders(defaultCorsResponse) {
+                                                if (context.method == OPTIONS) {
+                                                    complete(OK, HttpEntity.Empty)
+                                                } else {
+                                                    extractEntityAndProcessRequest(actionOwnerIdentity, action, extension, onBehalfOf, context, e)
+                                                }
+                                            }
+                                        } else {
+                                            extractEntityAndProcessRequest(actionOwnerIdentity, action, extension, onBehalfOf, context, e)
+                                        }
 
                                     case Failure(t: RejectRequest) =>
                                         terminate(t.code, t.message)
@@ -525,8 +543,7 @@ trait WhiskWebActionsApi
             // they will be overwritten
             if (isRawHttpAction || context.overrides(webApiDirectives.reservedProperties ++ action.immutableParameters).isEmpty) {
                 val content = context.toActionArgument(onBehalfOf, isRawHttpAction)
-                val waitOverride = Some(WhiskActionsApi.maxWaitForBlockingActivation)
-                invokeAction(actionOwnerIdentity, action, Some(JsObject(content)), blocking = true, waitOverride)
+                invokeAction(actionOwnerIdentity, action, Some(JsObject(content)), maxWaitForWebActionResult, cause = None)
             } else {
                 Future.failed(RejectRequest(BadRequest, Messages.parametersNotAllowed))
             }
@@ -536,12 +553,12 @@ trait WhiskWebActionsApi
     }
 
     private def completeRequest(
-        queuedActivation: Future[(ActivationId, Option[WhiskActivation])],
+        queuedActivation: Future[Either[ActivationId, WhiskActivation]],
         projectResultField: => List[String],
         responseType: MediaExtension)(
             implicit transid: TransactionId) = {
         onComplete(queuedActivation) {
-            case Success((activationId, Some(activation))) =>
+            case Success(Right(activation)) =>
                 val result = activation.resultAsJson
 
                 if (activation.response.isSuccess || activation.response.isApplicationError) {
@@ -568,14 +585,9 @@ trait WhiskWebActionsApi
                     terminate(BadRequest, Messages.errorProcessingRequest)
                 }
 
-            case Success((activationId, None)) =>
+            case Success(Left(activationId)) =>
                 // blocking invoke which got queued instead
                 // this should not happen, instead it should be a blocking invoke timeout
-                logging.warn(this, "activation returned an id, expecting timeout error instead")
-                terminate(Accepted, Messages.responseNotReady)
-
-            case Failure(t: BlockingInvokeTimeout) =>
-                // blocking invoke which timed out waiting on response
                 logging.info(this, "activation waiting period expired")
                 terminate(Accepted, Messages.responseNotReady)
 

@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -34,10 +35,11 @@ import common.StreamLogging
 import common.WskActorSystem
 import spray.json.JsObject
 import whisk.core.WhiskConfig
+import whisk.core.controller.test.WhiskAuthHelpers
+import whisk.core.database.ArtifactStore
 import whisk.core.database.test.DbUtils
 import whisk.core.entity._
 import whisk.core.entity.WhiskEntityQueries._
-import whisk.core.database.ArtifactStore
 
 @RunWith(classOf[JUnitRunner])
 class ViewTests extends FlatSpec
@@ -60,10 +62,10 @@ class ViewTests extends FlatSpec
         }
     }
 
-    val creds1 = WhiskAuth(Subject("s12345"), AuthKey())
+    val creds1 = WhiskAuthHelpers.newAuth(Subject("s12345"))
     val namespace1 = EntityPath(creds1.subject.asString)
 
-    val creds2 = WhiskAuth(Subject("t12345"), AuthKey())
+    val creds2 = WhiskAuthHelpers.newAuth(Subject("t12345"))
     val namespace2 = EntityPath(creds2.subject.asString)
 
     val config = new WhiskConfig(WhiskEntityStore.requiredProperties ++ WhiskActivationStore.requiredProperties)

@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -66,12 +67,6 @@ case object Remove
 case class NeedWork(data: ContainerData)
 case object ContainerPaused
 case object ContainerRemoved
-/**
- * Indicates the container resource is now free to receive a new request.
- * This message is sent to the parent which in turn notifies the feed that a
- * resource slot is available.
- */
-case object ActivationCompleted
 
 /**
  * A proxy that wraps a Container. It is used to keep track of the lifecycle
@@ -90,20 +85,17 @@ case object ActivationCompleted
  * @param factory a function generating a Container
  * @param sendActiveAck a function sending the activation via active ack
  * @param storeActivation a function storing the activation in a persistent store
+ * @param unusedTimeout time after which the container is automatically thrown away
+ * @param pauseGrace time to wait for new work before pausing the container
  */
 class ContainerProxy(
     factory: (TransactionId, String, ImageName, Boolean, ByteSize) => Future[Container],
-    sendActiveAck: (TransactionId, WhiskActivation) => Future[Any],
-    storeActivation: (TransactionId, WhiskActivation) => Future[Any]) extends FSM[ContainerState, ContainerData] with Stash {
+    sendActiveAck: (TransactionId, WhiskActivation, InstanceId) => Future[Any],
+    storeActivation: (TransactionId, WhiskActivation) => Future[Any],
+    unusedTimeout: FiniteDuration,
+    pauseGrace: FiniteDuration) extends FSM[ContainerState, ContainerData] with Stash {
     implicit val ec = context.system.dispatcher
     val logging = new AkkaLogging(context.system.log)
-
-    // The container is destroyed after this period of time
-    val unusedTimeout = 1.minutes
-
-    // The container is not paused for this period of time
-    // after an activation has finished successfully
-    val pauseGrace = 1.second
 
     startWith(Uninitialized, NoData())
 
@@ -155,8 +147,7 @@ class ContainerProxy(
                     // implicitly via a FailureMessage which will be processed later when the state
                     // transitions to Running
                     val activation = ContainerProxy.constructWhiskActivation(job, Interval.zero, response)
-                    self ! ActivationCompleted
-                    sendActiveAck(transid, activation)
+                    sendActiveAck(transid, activation, job.msg.rootControllerIndex)
                     storeActivation(transid, activation)
             }.flatMap {
                 container =>
@@ -214,11 +205,6 @@ class ContainerProxy(
         case Event(_: FailureMessage, _) =>
             context.parent ! ContainerRemoved
             stop()
-
-        // Activation finished either successfully or not
-        case Event(ActivationCompleted, _) =>
-            context.parent ! ActivationCompleted
-            stay
 
         case _ => delay
     }
@@ -363,7 +349,7 @@ class ContainerProxy(
         // asynchronous.
         activation.andThen {
             // the activation future will always complete with Success
-            case Success(ack) => sendActiveAck(tid, ack)
+            case Success(ack) => sendActiveAck(tid, ack, job.msg.rootControllerIndex)
         }.flatMap { activation =>
             container.logs(job.action.limits.logs.asMegaBytes, job.action.exec.sentinelledLogs).map { logs =>
                 activation.withLogs(ActivationLogs(logs.toVector))
@@ -371,7 +357,6 @@ class ContainerProxy(
         }.andThen {
             case Success(activation) => storeActivation(tid, activation)
         }.flatMap { activation =>
-            self ! ActivationCompleted
             // Fail the future iff the activation was unsuccessful to facilitate
             // better cleanup logic.
             if (activation.response.isSuccess) Future.successful(activation)
@@ -382,8 +367,10 @@ class ContainerProxy(
 
 object ContainerProxy {
     def props(factory: (TransactionId, String, ImageName, Boolean, ByteSize) => Future[Container],
-              ack: (TransactionId, WhiskActivation) => Future[Any],
-              store: (TransactionId, WhiskActivation) => Future[Any]) = Props(new ContainerProxy(factory, ack, store))
+              ack: (TransactionId, WhiskActivation, InstanceId) => Future[Any],
+              store: (TransactionId, WhiskActivation) => Future[Any],
+              unusedTimeout: FiniteDuration = 1.minutes,
+              pauseGrace: FiniteDuration = 50.milliseconds) = Props(new ContainerProxy(factory, ack, store, unusedTimeout, pauseGrace))
 
     // Needs to be thread-safe as it's used by multiple proxies concurrently.
     private val containerCount = new Counter

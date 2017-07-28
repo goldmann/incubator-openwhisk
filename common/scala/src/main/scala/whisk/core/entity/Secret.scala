@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -41,6 +42,9 @@ protected[core] object Secret extends ArgNormalizer[Secret] {
     /** Minimum secret length */
     private val MIN_LENGTH = 64
 
+    /** Maximum secret length */
+    private val MAX_LENGTH = 64
+
     /**
      * Creates a Secret from a string. The string must be a valid secret already.
      *
@@ -51,6 +55,7 @@ protected[core] object Secret extends ArgNormalizer[Secret] {
     @throws[IllegalArgumentException]
     override protected[entity] def factory(str: String): Secret = {
         require(str.length >= MIN_LENGTH, s"secret must be at least $MIN_LENGTH characters")
+        require(str.length <= MAX_LENGTH, s"secret must be at most $MAX_LENGTH characters")
         new Secret(str)
     }
 

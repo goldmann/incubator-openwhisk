@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,6 +19,7 @@ package whisk.core.entity
 
 import scala.util.Try
 
+import spray.http.StatusCodes.OK
 import spray.json._
 import spray.json.DefaultJsonProtocol
 import whisk.common.Logging
@@ -95,17 +97,26 @@ protected[core] object ActivationResponse extends DefaultJsonProtocol {
     protected[core] case class ConnectionError(t: Throwable) extends ContainerConnectionError
     protected[core] case class NoResponseReceived() extends ContainerConnectionError
     protected[core] case class Timeout() extends ContainerConnectionError
+
     /**
-     * @param okStatus the container response was OK (HTTP 200 status code), anything else is considered an error
+     * @param statusCode the container HTTP response code (e.g., 200 OK)
      * @param entity the entity response as string
      * @param truncated either None to indicate complete entity or Some(actual length, max allowed)
      */
-    protected[core] case class ContainerResponse(okStatus: Boolean, entity: String, truncated: Option[(ByteSize, ByteSize)] = None) {
+    protected[core] case class ContainerResponse(statusCode: Int, entity: String, truncated: Option[(ByteSize, ByteSize)]) {
+        /** true iff status code is OK (HTTP 200 status code), anything else is considered an error. **/
+        val okStatus = statusCode == OK.intValue
         val ok = okStatus && truncated.isEmpty
         override def toString = {
             val base = if (okStatus) "ok" else "not ok"
             val rest = truncated.map(e => s", truncated ${e.toString}").getOrElse("")
             base + rest
+        }
+    }
+
+    protected[core] object ContainerResponse {
+        def apply(okStatus: Boolean, entity: String, truncated: Option[(ByteSize, ByteSize)] = None): ContainerResponse = {
+            ContainerResponse(if (okStatus) OK.intValue else 500, entity, truncated)
         }
     }
 
@@ -148,14 +159,14 @@ protected[core] object ActivationResponse extends DefaultJsonProtocol {
      */
     protected[core] def processRunResponseContent(response: Either[ContainerConnectionError, ContainerResponse], logger: Logging): ActivationResponse = {
         response match {
-            case Right(ContainerResponse(okStatus, str, truncated)) => truncated match {
+            case Right(res @ ContainerResponse(_, str, truncated)) => truncated match {
                 case None =>
                     Try { str.parseJson.asJsObject } match {
                         case scala.util.Success(result @ JsObject(fields)) =>
                             // If the response is a JSON object container an error field, accept it as the response error.
                             val errorOpt = fields.get(ERROR_FIELD)
 
-                            if (okStatus) {
+                            if (res.okStatus) {
                                 errorOpt map { error =>
                                     applicationError(error)
                                 } getOrElse {

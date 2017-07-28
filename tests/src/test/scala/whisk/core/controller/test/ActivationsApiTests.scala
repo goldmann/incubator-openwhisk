@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -50,7 +51,7 @@ class ActivationsApiTests extends ControllerTestCommon with WhiskActivationsApi 
     /** Activations API tests */
     behavior of "Activations API"
 
-    val creds = WhiskAuth(Subject(), AuthKey()).toIdentity
+    val creds = WhiskAuthHelpers.newIdentity()
     val namespace = EntityPath(creds.subject.asString)
     val collectionPath = s"/${EntityPath.DEFAULT}/${collection.path}"
     def aname = MakeName.next("activations_tests")
@@ -59,7 +60,7 @@ class ActivationsApiTests extends ControllerTestCommon with WhiskActivationsApi 
     it should "get summary activation by namespace" in {
         implicit val tid = transid()
         // create two sets of activation records, and check that only one set is served back
-        val creds1 = WhiskAuth(Subject(), AuthKey())
+        val creds1 = WhiskAuthHelpers.newAuth()
         (1 to 2).map { i =>
             WhiskActivation(EntityPath(creds1.subject.asString), aname, creds1.subject, ActivationId(), start = Instant.now, end = Instant.now)
         } foreach { put(entityStore, _) }
@@ -94,7 +95,7 @@ class ActivationsApiTests extends ControllerTestCommon with WhiskActivationsApi 
         }
 
         // it should "reject list activations with explicit namespace not owned by subject" in {
-        val auser = WhiskAuth(Subject(), AuthKey()).toIdentity
+        val auser = WhiskAuthHelpers.newIdentity()
         Get(s"/$namespace/${collection.path}") ~> sealRoute(routes(auser)) ~> check {
             status should be(Forbidden)
         }
@@ -104,7 +105,7 @@ class ActivationsApiTests extends ControllerTestCommon with WhiskActivationsApi 
     it should "get full activation by namespace" in {
         implicit val tid = transid()
         // create two sets of activation records, and check that only one set is served back
-        val creds1 = WhiskAuth(Subject(), AuthKey())
+        val creds1 = WhiskAuthHelpers.newAuth()
         (1 to 2).map { i =>
             WhiskActivation(EntityPath(creds1.subject.asString), aname, creds1.subject, ActivationId(), start = Instant.now, end = Instant.now)
         } foreach { put(entityStore, _) }
@@ -130,7 +131,7 @@ class ActivationsApiTests extends ControllerTestCommon with WhiskActivationsApi 
     it should "get full activation by namespace within a date range" in {
         implicit val tid = transid()
         // create two sets of activation records, and check that only one set is served back
-        val creds1 = WhiskAuth(Subject(), AuthKey())
+        val creds1 = WhiskAuthHelpers.newAuth()
         (1 to 2).map { i =>
             WhiskActivation(EntityPath(creds1.subject.asString), aname, creds1.subject, ActivationId(), start = Instant.now, end = Instant.now)
         } foreach { put(activationStore, _) }
@@ -193,7 +194,7 @@ class ActivationsApiTests extends ControllerTestCommon with WhiskActivationsApi 
         implicit val tid = transid()
 
         // create two sets of activation records, and check that only one set is served back
-        val creds1 = WhiskAuth(Subject(), AuthKey())
+        val creds1 = WhiskAuthHelpers.newAuth()
         (1 to 2).map { i =>
             WhiskActivation(EntityPath(creds1.subject.asString), aname, creds1.subject, ActivationId(), start = Instant.now, end = Instant.now)
         } foreach { put(activationStore, _) }
@@ -211,6 +212,16 @@ class ActivationsApiTests extends ControllerTestCommon with WhiskActivationsApi 
                 activations.length should be(response.length)
                 activations forall { a => response contains a.summaryAsJson } should be(true)
             }
+        }
+    }
+
+    it should "reject activation list when limit is greater than maximum allowed value" in {
+        implicit val tid = transid()
+        val exceededMaxLimit = WhiskActivationsApi.maxActivationLimit + 1
+        val response = Get(s"$collectionPath?limit=$exceededMaxLimit") ~> sealRoute(routes(creds)) ~> check {
+            val response = responseAs[String]
+            response should include(Messages.maxActivationLimitExceeded(exceededMaxLimit, WhiskActivationsApi.maxActivationLimit))
+            status should be(BadRequest)
         }
     }
 
@@ -251,7 +262,7 @@ class ActivationsApiTests extends ControllerTestCommon with WhiskActivationsApi 
         }
 
         // it should "reject get activation by name in explicit namespace not owned by subject" in
-        val auser = WhiskAuth(Subject(), AuthKey()).toIdentity
+        val auser = WhiskAuthHelpers.newIdentity()
         Get(s"/$namespace/${collection.path}/${activation.activationId.asString}") ~> sealRoute(routes(auser)) ~> check {
             status should be(Forbidden)
         }

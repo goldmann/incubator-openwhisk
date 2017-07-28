@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package whisk.core.controller.test.migration
 
 import scala.Vector
@@ -23,27 +25,13 @@ import org.scalatest.junit.JUnitRunner
 import common.TestHelpers
 import common.WskTestHelpers
 import spray.http.StatusCodes.OK
-import spray.httpx.SprayJsonSupport.sprayJsonMarshaller
-import spray.httpx.SprayJsonSupport.sprayJsonUnmarshaller
-import spray.json.DefaultJsonProtocol.RootJsObjectFormat
-import spray.json.DefaultJsonProtocol.listFormat
-import spray.json.DefaultJsonProtocol.StringJsonFormat
-import spray.json.DefaultJsonProtocol.vectorFormat
-import spray.json.JsObject
-import spray.json.pimpAny
-import spray.json.pimpString
-
+import spray.httpx.SprayJsonSupport._
+import spray.json.DefaultJsonProtocol._
+import spray.json._
 import whisk.core.controller.WhiskActionsApi
 import whisk.core.controller.test.ControllerTestCommon
-import whisk.core.entity.AuthKey
-import whisk.core.entity.EntityName
-import whisk.core.entity.EntityPath
-import whisk.core.entity.Exec
-import whisk.core.entity.Parameters
-import whisk.core.entity.Subject
-import whisk.core.entity.WhiskAction
-import whisk.core.entity.WhiskActionPut
-import whisk.core.entity.WhiskAuth
+import whisk.core.controller.test.WhiskAuthHelpers
+import whisk.core.entity._
 
 /**
  * Tests migration of a new implementation of sequences: old style sequences can be updated and retrieved - standalone tests
@@ -56,7 +44,7 @@ class SequenceActionApiMigrationTests extends ControllerTestCommon
 
     behavior of "Sequence Action API Migration"
 
-    val creds = WhiskAuth(Subject(), AuthKey()).toIdentity
+    val creds = WhiskAuthHelpers.newIdentity()
     val namespace = EntityPath(creds.subject.asString)
     val collectionPath = s"/${EntityPath.DEFAULT}/${collection.path}"
     def aname = MakeName.next("seq_migration_tests")

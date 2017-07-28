@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,6 +17,7 @@
 
 package common;
 
+import static common.TestUtils.RunResult.executor;
 import static org.junit.Assert.assertTrue;
 
 import java.io.BufferedReader;
@@ -29,6 +31,10 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -63,6 +69,7 @@ public class TestUtils {
     public static final int CONFLICT        = 153;      // 409 - 256 = 153
     public static final int TOO_LARGE       = 157;      // 413 - 256 = 157
     public static final int THROTTLED       = 173;      // 429 (TOO_MANY_REQUESTS) - 256 = 173
+    public static final int APP_ERROR       = 246;      // 502 - 256 = 246
     public static final int TIMEOUT         = 246;      // 502 (GATEWAY_TIMEOUT) - 256 = 246
 
     private static final File catalogDir = WhiskProperties.getFileRelativeToWhiskHome("catalog");
@@ -93,7 +100,9 @@ public class TestUtils {
      * @param name the filename of the test action
      * @return
      */
-    public static String getTestActionFilename(String name) { return new File(testActionsDir, name).toString(); }
+    public static String getTestActionFilename(String name) {
+        return new File(testActionsDir, name).toString();
+    }
 
     /**
      * Gets path to test apigw file relative to test catalog directory.
@@ -101,7 +110,9 @@ public class TestUtils {
      * @param name the filename of the test action
      * @return
      */
-    public static String getTestApiGwFilename(String name) { return new File(testApiGwDir, name).toString(); }
+    public static String getTestApiGwFilename(String name) {
+        return new File(testApiGwDir, name).toString();
+    }
 
     /**
      * Gets the value of VCAP_SERVICES.
@@ -124,8 +135,8 @@ public class TestUtils {
     /**
      * Gets a VCAP_SERVICES credentials.
      *
-     * @return VCAP credentials as a <String, String> map for each <property,
-     * value> pair in credentials
+     * @return VCAP credentials as a <String, String> map for each
+     *         <property, value> pair in credentials
      */
     public static Map<String, String> getVCAPcredentials(String vcapService) {
         try {
@@ -190,11 +201,13 @@ public class TestUtils {
 
     /**
      * Encapsulates the result of running a native command, providing:
-     * exitCode the exit code of the process
-     * stdout the messages printed to standard out
-     * stderr the messages printed to standard error
+     *   exitCode the exit code of the process
+     *   stdout the messages printed to standard out
+     *   stderr the messages printed to standard error
      */
     public static class RunResult {
+        public static final ExecutorService executor = Executors.newFixedThreadPool(2);
+
         public final int exitCode;
         public final String stdout;
         public final String stderr;
@@ -275,13 +288,26 @@ public class TestUtils {
         if (env != null) {
             pb.environment().putAll(env);
         }
-        if (fileStdin != null ) {
+
+        if (fileStdin != null) {
             pb.redirectInput(fileStdin);
         }
         Process p = pb.start();
 
-        String stdout = inputStreamToString(p.getInputStream());
-        String stderr = inputStreamToString(p.getErrorStream());
+        Future<String> stdoutFuture = executor.submit(() -> inputStreamToString(p.getInputStream()));
+
+        Future<String> stderrFuture = executor.submit(() -> inputStreamToString(p.getErrorStream()));
+
+        String stdout = "";
+        String stderr = "";
+        try {
+            stdout = stdoutFuture.get();
+            stderr = stderrFuture.get();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        } catch (ExecutionException e) {
+            e.printStackTrace();
+        }
 
         try {
             p.waitFor();

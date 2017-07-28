@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -36,29 +37,20 @@ import akka.actor.FSM.Transition
 import akka.actor.Props
 import akka.pattern.pipe
 import akka.util.Timeout
+
 import spray.json._
 import spray.json.DefaultJsonProtocol._
+
 import whisk.common.AkkaLogging
 import whisk.common.ConsulKV.LoadBalancerKeys
 import whisk.common.KeyValueStore
 import whisk.common.LoggingMarkers
 import whisk.common.RingBuffer
 import whisk.common.TransactionId
-import whisk.core.connector.ActivationMessage
-import whisk.core.connector.MessageConsumer
-import whisk.core.connector.PingMessage
+import whisk.core.connector._
 import whisk.core.entitlement.Privilege.Privilege
 import whisk.core.entity.ActivationId.ActivationIdGenerator
-import whisk.core.entity.AuthKey
-import whisk.core.entity.CodeExecAsString
-import whisk.core.entity.DocRevision
-import whisk.core.entity.EntityName
-import whisk.core.entity.ExecManifest
-import whisk.core.entity.Identity
-import whisk.core.entity.Secret
-import whisk.core.entity.Subject
-import whisk.core.entity.UUID
-import whisk.core.entity.WhiskAction
+import whisk.core.entity._
 
 // Received events
 case object GetStatus
@@ -71,8 +63,8 @@ case object Offline extends InvokerState { val asString = "down" }
 case object Healthy extends InvokerState { val asString = "up" }
 case object UnHealthy extends InvokerState { val asString = "unhealthy" }
 
-case class ActivationRequest(msg: ActivationMessage, invoker: String)
-case class InvocationFinishedMessage(name: String, successful: Boolean)
+case class ActivationRequest(msg: ActivationMessage, invoker: InstanceId)
+case class InvocationFinishedMessage(invokerInstance: InstanceId, successful: Boolean)
 
 // Data stored in the Invoker
 final case class InvokerInfo(buffer: RingBuffer[Boolean])
@@ -89,10 +81,9 @@ final case class InvokerInfo(buffer: RingBuffer[Boolean])
  * by the InvokerPool and thus might not be caught by monitoring.
  */
 class InvokerPool(
-    childFactory: (ActorRefFactory, String) => ActorRef,
+    childFactory: (ActorRefFactory, InstanceId) => ActorRef,
     kv: KeyValueStore,
-    invokerDownCallback: String => Unit,
-    sendActivationToInvoker: (ActivationMessage, String) => Future[RecordMetadata],
+    sendActivationToInvoker: (ActivationMessage, InstanceId) => Future[RecordMetadata],
     pingConsumer: MessageConsumer) extends Actor {
 
     implicit val transid = TransactionId.invokerHealth
@@ -102,35 +93,41 @@ class InvokerPool(
 
     // State of the actor. It's important not to close over these
     // references directly, so they don't escape the Actor.
-    val invokers = mutable.HashMap.empty[String, ActorRef]
-    val invokerStatus = mutable.HashMap.empty[String, InvokerState]
+    val instanceToRef = mutable.Map[InstanceId, ActorRef]()
+    val refToInstance = mutable.Map[ActorRef, InstanceId]()
+    var status = IndexedSeq[(InstanceId, InvokerState)]()
 
     def receive = {
         case p: PingMessage =>
-            val invoker = invokers.getOrElseUpdate(p.name, {
-                logging.info(this, s"registered a new invoker: ${p.name}")(TransactionId.invokerHealth)
-                val ref = childFactory(context, p.name)
+            val invoker = instanceToRef.getOrElseUpdate(p.instance, {
+                logging.info(this, s"registered a new invoker: invoker${p.instance.toInt}")(TransactionId.invokerHealth)
+
+                status = padToIndexed(status, p.instance.toInt + 1, i => (InstanceId(i), Offline))
+
+                val ref = childFactory(context, p.instance)
                 ref ! SubscribeTransitionCallBack(self) // register for state change events
+
+                refToInstance.update(ref, p.instance)
                 ref
             })
             invoker.forward(p)
 
-        case GetStatus => sender() ! invokerStatus.toMap
+        case GetStatus => sender() ! status
 
         case msg: InvocationFinishedMessage => {
             // Forward message to invoker, if InvokerActor exists
-            invokers.get(msg.name).map(_.forward(msg))
+            instanceToRef.get(msg.invokerInstance).map(_.forward(msg))
         }
 
         case CurrentState(invoker, currentState: InvokerState) =>
-            invokerStatus.update(invoker.path.name, currentState)
+            refToInstance.get(invoker).foreach { instance =>
+                status = status.updated(instance.toInt, (instance, currentState))
+            }
             publishStatus()
 
         case Transition(invoker, oldState: InvokerState, newState: InvokerState) =>
-            invokerStatus.update(invoker.path.name, newState)
-            newState match {
-                case Offline => Future(invokerDownCallback(invoker.path.name))
-                case _       =>
+            refToInstance.get(invoker).foreach {
+                instance => status = status.updated(instance.toInt, (instance, newState))
             }
             publishStatus()
 
@@ -139,33 +136,43 @@ class InvokerPool(
     }
 
     def publishStatus() = {
-        val json = invokerStatus.toMap.mapValues(_.asString).toJson
+        val json = status.map { case (instance, state) => s"invoker${instance.toInt}" -> state.asString }.toMap.toJson
         kv.put(LoadBalancerKeys.invokerHealth, json.compactPrint)
 
-        val pretty = invokerStatus.toSeq.sortBy {
-            case (name, _) => name.filter(_.isDigit).toInt
-        }.map { case (name, state) => s"$name: $state" }
+        val pretty = status.map { case (instance, state) => s"${instance.toInt} -> $state" }
         logging.info(this, s"invoker status changed to ${pretty.mkString(", ")}")
     }
 
     /** Receive Ping messages from invokers. */
-    pingConsumer.onMessage((topic, _, _, bytes) => {
+    val pingPollDuration = 1.second
+    val invokerPingFeed = context.system.actorOf(Props {
+        new MessageFeed("ping", logging, pingConsumer, pingConsumer.maxPeek, pingPollDuration, processInvokerPing, logHandoff = false)
+    })
+
+    def processInvokerPing(bytes: Array[Byte]): Future[Unit] = Future {
         val raw = new String(bytes, StandardCharsets.UTF_8)
         PingMessage.parse(raw) match {
-            case Success(p: PingMessage) => self ! p
-            case Failure(t)              => logging.error(this, s"failed processing message: $raw with $t")
+            case Success(p: PingMessage) =>
+                self ! p
+                invokerPingFeed ! MessageFeed.Processed
+
+            case Failure(t) =>
+                invokerPingFeed ! MessageFeed.Processed
+                logging.error(this, s"failed processing message: $raw with $t")
         }
-    })
+    }
+
+    /** Pads a list to a given length using the given function to compute entries */
+    def padToIndexed[A](list: IndexedSeq[A], n: Int, f: (Int) => A) = list ++ (list.size until n).map(f)
 }
 
 object InvokerPool {
     def props(
-        f: (ActorRefFactory, String) => ActorRef,
+        f: (ActorRefFactory, InstanceId) => ActorRef,
         kv: KeyValueStore,
-        cb: String => Unit,
-        p: (ActivationMessage, String) => Future[RecordMetadata],
+        p: (ActivationMessage, InstanceId) => Future[RecordMetadata],
         pc: MessageConsumer) = {
-        Props(new InvokerPool(f, kv, cb, p, pc))
+        Props(new InvokerPool(f, kv, p, pc))
     }
 
     /** A stub identity for invoking the test action. This does not need to be a valid identity. */
@@ -175,10 +182,10 @@ object InvokerPool {
     }
 
     /** An action to use for monitoring invoker health. */
-    val healthAction = ExecManifest.runtimesManifest.resolveDefaultRuntime("nodejs:6").map { manifest =>
+    def healthAction(i: InstanceId) = ExecManifest.runtimesManifest.resolveDefaultRuntime("nodejs:6").map { manifest =>
         new WhiskAction(
             namespace = healthActionIdentity.namespace.toPath,
-            name = EntityName("invokerHealthTestAction"),
+            name = EntityName(s"invokerHealthTestAction${i.toInt}"),
             exec = new CodeExecAsString(manifest, """function main(params) { return params; }""", None))
     }
 }
@@ -189,10 +196,10 @@ object InvokerPool {
  * This finite state-machine represents an Invoker in its possible
  * states "Healthy" and "Offline".
  */
-class InvokerActor extends FSM[InvokerState, InvokerInfo] {
+class InvokerActor(invokerInstance: InstanceId, controllerInstance: InstanceId) extends FSM[InvokerState, InvokerInfo] {
     implicit val transid = TransactionId.invokerHealth
     implicit val logging = new AkkaLogging(context.system.log)
-    def name = self.path.name
+    val name = s"invoker${invokerInstance.toInt}"
 
     val healthyTimeout = 10.seconds
 
@@ -299,7 +306,7 @@ class InvokerActor extends FSM[InvokerState, InvokerInfo] {
      * The InvokerPool redirects it to the invoker which is represented by this InvokerActor.
      */
     private def invokeTestAction() = {
-        InvokerPool.healthAction.map { action =>
+        InvokerPool.healthAction(controllerInstance).map { action =>
             val activationMessage = ActivationMessage(
                 // Use the sid of the InvokerSupervisor as tid
                 transid = transid,
@@ -310,9 +317,10 @@ class InvokerActor extends FSM[InvokerState, InvokerInfo] {
                 // Create a new Activation ID for this activation
                 activationId = new ActivationIdGenerator {}.make(),
                 activationNamespace = action.namespace,
+                rootControllerIndex = controllerInstance,
                 content = None)
 
-            context.parent ! ActivationRequest(activationMessage, name)
+            context.parent ! ActivationRequest(activationMessage, invokerInstance)
         }
     }
 
@@ -327,7 +335,7 @@ class InvokerActor extends FSM[InvokerState, InvokerInfo] {
 }
 
 object InvokerActor {
-    def props() = Props[InvokerActor]
+    def props(invokerInstance: InstanceId, controllerInstance: InstanceId) = Props(new InvokerActor(invokerInstance, controllerInstance))
 
     val bufferSize = 10
     val bufferErrorTolerance = 3

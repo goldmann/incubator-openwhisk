@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -34,7 +35,6 @@ import common.TestHelpers
 import common.TestUtils
 import common.TestUtils._
 import common.Wsk
-import common.WskAdmin
 import common.WskProps
 import common.WskPropsV2
 import common.WskTestHelpers
@@ -56,7 +56,7 @@ class ApiGwEndToEndTests
 
     implicit val wskprops = WskProps()
     val wsk = new Wsk
-    val (cliuser, clinamespace) = WskAdmin.getUser(wskprops.authKey)
+    val clinamespace = wsk.namespace.whois()
 
     // Custom CLI properties file
     val cliWskPropsFile = File.createTempFile("wskprops", ".tmp")
@@ -84,7 +84,7 @@ class ApiGwEndToEndTests
         val urlqueryvalue = "test"
 
         try {
-            println("cli user: " + cliuser + "; cli namespace: " + clinamespace)
+            println("cli namespace: " + clinamespace)
 
             // Create the action for the API
             val file = TestUtils.getTestActionFilename(s"echo.js")
@@ -154,7 +154,7 @@ class ApiGwEndToEndTests
         val urlqueryvalue = "test"
 
         try {
-            println("cli user: " + cliuser + "; cli namespace: " + clinamespace)
+            println("cli namespace: " + clinamespace)
 
             // Create the action for the API.  It must be a "web-action" action.
             val file = TestUtils.getTestActionFilename(s"echo-web-http.js")

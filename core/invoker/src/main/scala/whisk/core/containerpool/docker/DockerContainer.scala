@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -80,7 +81,7 @@ object DockerContainer {
             case (key, value) => Seq("-e", s"$key=$value")
         }.flatten
 
-        val dnsArgs = dnsServers.map(Seq("--dns",_)).flatten
+        val dnsArgs = dnsServers.map(Seq("--dns", _)).flatten
 
         val args = Seq(
             "--cap-drop", "NET_RAW",
@@ -141,7 +142,10 @@ class DockerContainer(id: ContainerId, ip: ContainerIp)(
 
     def suspend()(implicit transid: TransactionId): Future[Unit] = runc.pause(id)
     def resume()(implicit transid: TransactionId): Future[Unit] = runc.resume(id)
-    def destroy()(implicit transid: TransactionId): Future[Unit] = docker.rm(id)
+    def destroy()(implicit transid: TransactionId): Future[Unit] = {
+        httpConnection.foreach(_.close())
+        docker.rm(id)
+    }
 
     def initialize(initializer: JsObject, timeout: FiniteDuration)(implicit transid: TransactionId): Future[Interval] = {
         val start = transid.started(this, LoggingMarkers.INVOKER_ACTIVATION_INIT, s"sending initialization to $id $ip")

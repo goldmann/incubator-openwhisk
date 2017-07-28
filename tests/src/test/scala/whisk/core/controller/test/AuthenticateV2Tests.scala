@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -25,7 +26,7 @@ import spray.routing.authentication.UserPass
 import whisk.core.controller.Authenticate
 import whisk.core.entity.AuthKey
 import whisk.core.entity.Subject
-import whisk.core.entity.WhiskAuthV2
+import whisk.core.entity.WhiskAuth
 import whisk.core.entity.WhiskNamespace
 import whisk.core.entitlement.Privilege
 import whisk.core.entity.Identity
@@ -58,9 +59,9 @@ class AuthenticateV2Tests extends ControllerTestCommon with Authenticate {
             WhiskNamespace(aname, AuthKey()),
             WhiskNamespace(aname, AuthKey()))
 
-        val entry = WhiskAuthV2(subject, namespaces)
+        val entry = WhiskAuth(subject, namespaces)
 
-        put(authStoreV2, entry)
+        put(authStore, entry)
 
         // Try to login with each specific namespace
         namespaces.foreach { ns =>

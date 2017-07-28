@@ -1,11 +1,12 @@
 /*
- * Copyright 2015-2016 IBM Corporation
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -24,10 +25,11 @@ import org.scalatest.junit.JUnitRunner
 
 import common.RunWskAdminCmd
 import common.TestHelpers
+import common.Wsk
 import common.WskAdmin
+import common.WskProps
 import whisk.core.entity.AuthKey
 import whisk.core.entity.Subject
-import whisk.core.entity.WhiskAuth
 
 @RunWith(classOf[JUnitRunner])
 class WskAdminTests
@@ -42,8 +44,8 @@ class WskAdminTests
 
     it should "CRD a subject" in {
         val wskadmin = new RunWskAdminCmd {}
-        val auth = WhiskAuth(Subject(), AuthKey())
-        val subject = auth.subject.asString
+        val auth = AuthKey()
+        val subject = Subject().asString
         try {
             println(s"CRD subject: $subject")
             val create = wskadmin.cli(Seq("user", "create", subject))
@@ -66,14 +68,14 @@ class WskAdminTests
 
             // recreate with explicit
             val newspace = s"${subject}.myspace"
-            wskadmin.cli(Seq("user", "create", subject, "-ns", newspace, "-u", auth.authkey.compact))
+            wskadmin.cli(Seq("user", "create", subject, "-ns", newspace, "-u", auth.compact))
 
             whisk.utils.retry({
                 // reverse lookup by namespace
-                wskadmin.cli(Seq("user", "list", "-k", newspace)).stdout.trim should be(auth.authkey.compact)
+                wskadmin.cli(Seq("user", "list", "-k", newspace)).stdout.trim should be(auth.compact)
             }, 10, Some(1.second))
 
-            wskadmin.cli(Seq("user", "get", subject, "-ns", newspace)).stdout.trim should be(auth.authkey.compact)
+            wskadmin.cli(Seq("user", "get", subject, "-ns", newspace)).stdout.trim should be(auth.compact)
 
             // delete namespace
             wskadmin.cli(Seq("user", "delete", subject, "-ns", newspace)).stdout should include("Namespace deleted")
@@ -82,4 +84,11 @@ class WskAdminTests
         }
     }
 
+    it should "verify guest account installed correctly" in {
+        val wskadmin = new RunWskAdminCmd {}
+        implicit val wskprops = WskProps()
+        val wsk = new Wsk
+        val ns = wsk.namespace.whois()
+        wskadmin.cli(Seq("user", "get", ns)).stdout.trim should be(wskprops.authKey)
+    }
 }
