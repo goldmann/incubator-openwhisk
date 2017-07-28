@@ -65,7 +65,7 @@ class InvokerReactive(
     private val activationStore = WhiskActivationStore.datastore(config)
 
     private val factory = if (Try(config.invokerUseKubernetes.toBoolean).getOrElse(false)) {
-        new KubernetesContainerFactory(s"invoker$instance", config)
+        new KubernetesContainerFactory(s"invoker${instance.toInt}", config)
     } else {
         new DockerContainerFactory(config)
     }
