@@ -56,7 +56,7 @@ class WhiskConfig(
     override protected def getProperties() = {
         val properties = super.getProperties()
         WhiskConfig.readPropertiesFromFile(properties, Option(propertiesFile) getOrElse (WhiskConfig.whiskPropertiesFile))
-        WhiskConfig.readPropertiesFromConsul(properties)
+        // WhiskConfig.readPropertiesFromConsul(properties)
         properties
     }
 
