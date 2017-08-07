@@ -64,14 +64,19 @@ object KubernetesContainer {
     def create(transid: TransactionId,
                image: String,
                userProvidedImage: Boolean = false,
+               environment: Map[String, String] = Map(),
                labels: Map[String, String] = Map(),
                name: Option[String] = None)(
                   implicit kubernetes: KubernetesApi, ec: ExecutionContext, log: Logging): Future[KubernetesContainer] = {
         implicit val tid = transid
 
+        val environmentArgs = environment.map {
+            case (key, value) => Seq("--env", s"$key=$value")
+        }.flatten.toSeq
+
         val podName = name.getOrElse("").replace("_", "-").replaceAll("[()]", "").toLowerCase()
         for {
-            id <- kubernetes.run(image, podName, labels).recoverWith {
+            id <- kubernetes.run(image, podName, environmentArgs, labels).recoverWith {
                 case _ => Future.failed(WhiskContainerStartupError(s"Failed to run container with image '${image}'."))
             }
             ip <- kubernetes.inspectIPAddress(id).recoverWith {
@@ -227,6 +232,7 @@ class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ec
             tid,
             image = image,
             userProvidedImage = userProvidedImage,
+            environment = Map("__OW_API_HOST" -> config.wskApiHost),
             labels = Map("invoker" -> label),
             name = Some(name))
     }

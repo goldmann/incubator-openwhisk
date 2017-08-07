@@ -71,8 +71,9 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
         Seq(kubectlBin)
     }
 
-    def run(image: String, name: String, labels: Map[String, String] = Map())(implicit transid: TransactionId): Future[ContainerId] = {
-        val run = runCmd("run", name, "--image", image, "--restart", "Never").map {_ => name}.map(ContainerId.apply)
+    def run(image: String, name: String, extraArgs: Seq[String], labels: Map[String, String] = Map())(implicit transid: TransactionId): Future[ContainerId] = {
+        val runArgs = Seq("run", name, "--image", image, "--restart", "Never") ++ extraArgs
+        val run = runCmd(runArgs: _*).map {_ => name}.map(ContainerId.apply)
         if (labels.isEmpty) {
             run
         } else {
@@ -171,7 +172,7 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
 }
 
 trait KubernetesApi {
-    def run(image: String, name: String, labels: Map[String, String] = Map())(implicit transid: TransactionId): Future[ContainerId]
+    def run(image: String, name: String, extraArgs: Seq[String], labels: Map[String, String] = Map())(implicit transid: TransactionId): Future[ContainerId]
 
     def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerIp]
 
