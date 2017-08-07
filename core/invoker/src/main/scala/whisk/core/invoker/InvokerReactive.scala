@@ -72,7 +72,10 @@ class InvokerReactive(
     logging.info(this, s"using $factory")
     
     factory.cleanup()
-    sys.addShutdownHook(factory.cleanup())
+    sys.addShutdownHook {
+        logging.info(this, "Cleaning up function runtimes")
+        factory.cleanup()
+    }
 
     /** Sends an active-ack. */
     val ack = (tid: TransactionId, activationResult: WhiskActivation, controllerInstance: InstanceId) => {
