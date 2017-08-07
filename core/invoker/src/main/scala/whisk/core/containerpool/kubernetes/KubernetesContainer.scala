@@ -37,7 +37,6 @@ import whisk.core.container.Interval
 import whisk.core.container.RunResult
 import whisk.core.containerpool.Container
 import whisk.core.containerpool.ContainerFactory
-import whisk.core.containerpool.ContainerProxy
 import whisk.core.containerpool.InitializationError
 import whisk.core.containerpool.WhiskContainerStartupError
 import whisk.core.containerpool.docker.ContainerId
@@ -70,9 +69,7 @@ object KubernetesContainer {
                   implicit kubernetes: KubernetesApi, ec: ExecutionContext, log: Logging): Future[KubernetesContainer] = {
         implicit val tid = transid
 
-        val invokerPrefix = labels.getOrElse("invoker", "")
-        val containerSuffix = name.getOrElse(ContainerProxy.containerName("default", image))
-        val podName = Array(invokerPrefix, containerSuffix).mkString("-").replace("_", "-").replaceAll("[()]", "").toLowerCase()
+        val podName = name.getOrElse("").replace("_", "-").replaceAll("[()]", "").toLowerCase()
         for {
             id <- kubernetes.run(image, podName, labels).recoverWith {
                 case _ => Future.failed(WhiskContainerStartupError(s"Failed to run container with image '${image}'."))
