@@ -276,7 +276,6 @@ class WskAction()
     with HasActivation {
 
     override protected val noun = "action"
-    override def baseCommand = Wsk.baseCommand
 
     /**
      * Creates action. Parameters mirror those available in the CLI.
@@ -1007,19 +1006,16 @@ trait WaitFor {
 
 object Wsk {
     private val binaryName = "wsk"
+    private val cliPath = if (WhiskProperties.useCLIDownload) getDownloadedGoCLIPath else WhiskProperties.getCLIPath
+
+    assert((new File(cliPath)).exists, s"did not find $cliPath")
 
     /** What is the path to a downloaded CLI? **/
     private def getDownloadedGoCLIPath = {
         s"${System.getProperty("user.home")}${File.separator}.local${File.separator}bin${File.separator}${binaryName}"
     }
 
-    def exists() = {
-        val cliPath = if (WhiskProperties.useCLIDownload) getDownloadedGoCLIPath else WhiskProperties.getCLIPath
-        assert((new File(cliPath)).exists, s"did not find $cliPath")
-    }
-
-    def baseCommand() =
-        if (WhiskProperties.useCLIDownload) Buffer(getDownloadedGoCLIPath) else Buffer(WhiskProperties.getCLIPath)
+    def baseCommand = Buffer(cliPath)
 }
 
 trait RunWskCmd extends Matchers {
@@ -1040,13 +1036,14 @@ trait RunWskCmd extends Matchers {
             env: Map[String, String] = Map("WSK_CONFIG_FILE" -> ""),
             workingDir: File = new File("."),
             stdinFile: Option[File] = None,
-            showCmd: Boolean = false): RunResult = {
+            showCmd: Boolean = false,
+            hideFromOutput: Seq[String] = Seq()): RunResult = {
         val args = baseCommand
         if (verbose) args += "--verbose"
         if (showCmd) println(args.mkString(" ") + " " + params.mkString(" "))
         val rr = TestUtils.runCmd(DONTCARE_EXIT, workingDir, TestUtils.logger, sys.env ++ env, stdinFile.getOrElse(null), args ++ params: _*)
 
-        withClue(reportFailure(args ++ params, expectedExitCode, rr)) {
+        withClue(hideStr(reportFailure(args ++ params, expectedExitCode, rr).toString(), hideFromOutput)) {
             if (expectedExitCode != TestUtils.DONTCARE_EXIT) {
                 val ok = (rr.exitCode == expectedExitCode) || (expectedExitCode == TestUtils.ANY_ERROR_EXIT && rr.exitCode != 0)
                 if (!ok) {
@@ -1056,6 +1053,13 @@ trait RunWskCmd extends Matchers {
         }
 
         rr
+    }
+
+    // Takes a string and a list of sensitive strings. Any sensistive string found in
+    // the target string will be replaced with "XXXXX", returning the processed string
+    def hideStr(str: String, hideThese: Seq[String]): String = {
+        // Iterate through each string to hide, replacing it in the target string (str)
+        hideThese.fold(str)((updatedStr, replaceThis) => updatedStr.replace(replaceThis, "XXXXX"))
     }
 
     /*

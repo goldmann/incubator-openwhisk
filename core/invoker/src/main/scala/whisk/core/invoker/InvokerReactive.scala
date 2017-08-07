@@ -103,7 +103,7 @@ class InvokerReactive(
     }
 
     /** Creates a ContainerProxy Actor when being called. */
-    val childFactory = (f: ActorRefFactory) => f.actorOf(ContainerProxy.props(factory.create _, ack, store))
+    val childFactory = (f: ActorRefFactory) => f.actorOf(ContainerProxy.props(factory.create _, ack, store, instance))
 
     val prewarmKind = "nodejs:6"
     val prewarmExec = ExecManifest.runtimesManifest.resolveDefaultRuntime(prewarmKind).map { manifest =>

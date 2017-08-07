@@ -65,10 +65,6 @@ class WskBasicUsageTests
 
     behavior of "Wsk CLI usage"
 
-    it should "confirm wsk exists" in {
-        Wsk.exists
-    }
-
     it should "show help and usage info" in {
         val stdout = wsk.cli(Seq()).stdout
         stdout should include regex ("""(?i)Usage:""")
@@ -636,6 +632,22 @@ class WskBasicUsageTests
                 stdout should include(webActionPath.format(wskprops.apihost, wskprops.apiversion, encodedNamespace, encodedPackageName, encodedWebActionName))
 
             wsk.action.get(nonExistentActionName, url = Some(true), expectedExitCode = NOT_FOUND)
+    }
+    it should "limit length of HTTP request and response bodies for --verbose" in withAssetCleaner(wskprops) {
+        (wp, assetHelper) =>
+            val name = "limitVerbose"
+            val msg = "will be truncated"
+            val params = Seq("-p", "bigValue", "a" * 1000)
+
+            assetHelper.withCleaner(wsk.action, name) {
+                (action, _) => action.create(name, Some(TestUtils.getTestActionFilename("echo.js")))
+            }
+
+            val truncated = wsk.cli(Seq("action", "invoke", name, "-b", "-v", "--auth", wskprops.authKey) ++ params ++ wskprops.overrides).stdout
+            msg.r.findAllIn(truncated).length shouldBe 2
+
+            val notTruncated = wsk.cli(Seq("action", "invoke", name, "-b", "-d", "--auth", wskprops.authKey) ++ params ++ wskprops.overrides).stdout
+            msg.r.findAllIn(notTruncated).length shouldBe 0
     }
 
     behavior of "Wsk packages"
