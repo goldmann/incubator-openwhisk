@@ -24,7 +24,7 @@ import scala.concurrent.duration._
 import whisk.common.Logging
 import whisk.common.TransactionId
 import whisk.core.containerpool.Container
-import whisk.core.containerpool.ContainerFactory
+import whisk.core.containerpool.ContainerProvider
 import whisk.core.entity.ByteSize
 import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity.InstanceId
@@ -33,7 +33,7 @@ import whisk.spi.Dependencies
 import whisk.spi.SpiFactory
 
 
-class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ec: ExecutionContext, logger: Logging) extends ContainerFactory {
+class KubernetesContainerProvider(label: String, config: WhiskConfig)(implicit ec: ExecutionContext, logger: Logging) extends ContainerProvider {
 
     implicit val kubernetes = new KubernetesClient()(ec)
 
@@ -59,11 +59,11 @@ class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ec
     }
 }
 
-object KubernetesContainerFactory extends SpiFactory[ContainerFactory] {
-    override def apply(deps: Dependencies): ContainerFactory = {
+object KubernetesContainerProvider extends SpiFactory[ContainerProvider] {
+    override def apply(deps: Dependencies): ContainerProvider = {
         implicit val ec = deps.get[ExecutionContext]
         implicit val lg = deps.get[Logging]
         val label = s"invoker${deps.get[InstanceId].toInt}"
-        new KubernetesContainerFactory(label, deps.get[WhiskConfig])
+        new KubernetesContainerProvider(label, deps.get[WhiskConfig])
     }
 }

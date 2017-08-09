@@ -38,7 +38,7 @@ import whisk.core.connector.MessageFeed
 import whisk.core.connector.MessageProducer
 import whisk.core.container.{ ContainerPool => OldContainerPool }
 import whisk.core.container.Interval
-import whisk.core.containerpool.ContainerFactory
+import whisk.core.containerpool.ContainerProvider
 import whisk.core.containerpool.ContainerPool
 import whisk.core.containerpool.ContainerProxy
 import whisk.core.containerpool.PrewarmingConfig
@@ -63,13 +63,13 @@ class InvokerReactive(
     private val entityStore = WhiskEntityStore.datastore(config)
     private val activationStore = WhiskActivationStore.datastore(config)
     private val deps = new Dependencies(instance, config, ec, logging)
-    private val factory = SpiLoader.get[ContainerFactory](deps)
-    logging.info(this, s"using $factory")
+    private val provider = SpiLoader.get[ContainerProvider](deps)
+    logging.info(this, s"using $provider")
 
-    factory.cleanup()
+    provider.cleanup()
     sys.addShutdownHook {
         logging.info(this, "Cleaning up function runtimes")
-        factory.cleanup()
+        provider.cleanup()
     }
 
     /** Sends an active-ack. */
@@ -101,7 +101,7 @@ class InvokerReactive(
     }
 
     /** Creates a ContainerProxy Actor when being called. */
-    val childFactory = (f: ActorRefFactory) => f.actorOf(ContainerProxy.props(factory.create _, ack, store, instance))
+    val childFactory = (f: ActorRefFactory) => f.actorOf(ContainerProxy.props(provider.create _, ack, store, instance))
 
     val prewarmKind = "nodejs:6"
     val prewarmExec = ExecManifest.runtimesManifest.resolveDefaultRuntime(prewarmKind).map { manifest =>

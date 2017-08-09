@@ -24,7 +24,7 @@ import whisk.core.entity.ByteSize
 import whisk.core.entity.ExecManifest.ImageName
 import whisk.spi.Spi
 
-trait ContainerFactory extends Spi {
+trait ContainerProvider extends Spi {
     def create(tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize): Future[Container]
     def cleanup(): Unit
 }

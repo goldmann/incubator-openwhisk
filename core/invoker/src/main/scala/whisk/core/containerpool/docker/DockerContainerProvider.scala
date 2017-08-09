@@ -26,14 +26,14 @@ import whisk.common.Logging
 import whisk.common.TransactionId
 import whisk.core.container.{ ContainerPool => OldContainerPool }
 import whisk.core.containerpool.Container
-import whisk.core.containerpool.ContainerFactory
+import whisk.core.containerpool.ContainerProvider
 import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity.ByteSize
 import whisk.core.WhiskConfig
 import whisk.spi.Dependencies
 import whisk.spi.SpiFactory
 
-class DockerContainerFactory(config: WhiskConfig)(implicit ec: ExecutionContext, logger: Logging) extends ContainerFactory {
+class DockerContainerProvider(config: WhiskConfig)(implicit ec: ExecutionContext, logger: Logging) extends ContainerProvider {
 
     implicit val docker = new DockerClientWithFileAccess()(ec)
     implicit val runc = new RuncClient(ec)
@@ -75,10 +75,10 @@ class DockerContainerFactory(config: WhiskConfig)(implicit ec: ExecutionContext,
     }
 }
 
-object DockerContainerFactory extends SpiFactory[ContainerFactory] {
-    override def apply(deps: Dependencies): ContainerFactory = {
+object DockerContainerProvider extends SpiFactory[ContainerProvider] {
+    override def apply(deps: Dependencies): ContainerProvider = {
         implicit val ec = deps.get[ExecutionContext]
         implicit val lg = deps.get[Logging]
-        new DockerContainerFactory(deps.get[WhiskConfig])
+        new DockerContainerProvider(deps.get[WhiskConfig])
     }
 }
