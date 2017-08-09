@@ -18,7 +18,6 @@ package whisk.core.containerpool.kubernetes
 
 import java.time.Instant
 
-import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -36,17 +35,14 @@ import whisk.core.container.HttpUtils
 import whisk.core.container.Interval
 import whisk.core.container.RunResult
 import whisk.core.containerpool.Container
-import whisk.core.containerpool.ContainerFactory
 import whisk.core.containerpool.InitializationError
 import whisk.core.containerpool.WhiskContainerStartupError
 import whisk.core.containerpool.docker.ContainerId
 import whisk.core.containerpool.docker.ContainerIp
 import whisk.core.entity.ActivationResponse
 import whisk.core.entity.ByteSize
-import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity.size._
 import whisk.core.invoker.ActionLogDriver
-import whisk.core.WhiskConfig
 import whisk.http.Messages
 
 object KubernetesContainer {
@@ -209,31 +205,5 @@ class KubernetesContainer(id: ContainerId, ip: ContainerIp) (
             val finished = Instant.now()
             RunResult(Interval(started, finished), response)
         }
-    }
-}
-
-class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ec: ExecutionContext, logger: Logging) extends ContainerFactory {
-
-    implicit val kubernetes = new KubernetesClient()(ec)
-
-    def cleanup() = {
-        val cleaning = kubernetes.rm("invoker", label)(TransactionId.invokerNanny)
-        Await.ready(cleaning, 30.seconds)
-    }
-
-    def create(tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize): Future[Container] = {
-        val image = if (userProvidedImage) {
-            actionImage.publicImageName
-        } else {
-            actionImage.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
-        }
-
-        KubernetesContainer.create(
-            tid,
-            image = image,
-            userProvidedImage = userProvidedImage,
-            environment = Map("__OW_API_HOST" -> config.wskApiHost),
-            labels = Map("invoker" -> label),
-            name = Some(name))
     }
 }

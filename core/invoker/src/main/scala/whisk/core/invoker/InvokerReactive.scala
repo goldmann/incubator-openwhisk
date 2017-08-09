@@ -20,7 +20,6 @@ package whisk.core.invoker
 import scala.concurrent.Future
 import scala.util.Failure
 import scala.util.Success
-import scala.util.Try
 
 import org.apache.kafka.common.errors.RecordTooLargeException
 
@@ -39,18 +38,18 @@ import whisk.core.connector.MessageFeed
 import whisk.core.connector.MessageProducer
 import whisk.core.container.{ ContainerPool => OldContainerPool }
 import whisk.core.container.Interval
+import whisk.core.containerpool.ContainerFactory
 import whisk.core.containerpool.ContainerPool
 import whisk.core.containerpool.ContainerProxy
 import whisk.core.containerpool.PrewarmingConfig
 import whisk.core.containerpool.Run
-import whisk.core.containerpool.docker.DockerContainerFactory
-import whisk.core.containerpool.kubernetes.KubernetesContainerFactory
 import whisk.core.database.NoDocumentException
 import whisk.core.dispatcher.MessageHandler
 import whisk.core.entity._
 import whisk.core.entity.size._
 import whisk.http.Messages
-
+import whisk.spi.SpiLoader
+import whisk.spi.Dependencies
 
 class InvokerReactive(
     config: WhiskConfig,
@@ -63,14 +62,10 @@ class InvokerReactive(
 
     private val entityStore = WhiskEntityStore.datastore(config)
     private val activationStore = WhiskActivationStore.datastore(config)
-
-    private val factory = if (Try(config.invokerUseKubernetes.toBoolean).getOrElse(false)) {
-        new KubernetesContainerFactory(s"invoker${instance.toInt}", config)
-    } else {
-        new DockerContainerFactory(config)
-    }
+    private val deps = new Dependencies(s"invoker${instance.toInt}", config, ec, logging)
+    private val factory = SpiLoader.get[ContainerFactory](deps)
     logging.info(this, s"using $factory")
-    
+
     factory.cleanup()
     sys.addShutdownHook {
         logging.info(this, "Cleaning up function runtimes")

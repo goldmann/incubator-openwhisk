@@ -34,7 +34,7 @@ import whisk.common.{Counter, Logging, LoggingMarkers, TransactionId}
 import whisk.common.AkkaLogging
 import whisk.common.Scheduler
 import whisk.core.WhiskConfig
-import whisk.core.WhiskConfig.{dockerImagePrefix, dockerRegistry, invokerUseKubernetes, invokerUseReactivePool, kafkaHost, logsDir, servicePort}
+import whisk.core.WhiskConfig.{dockerImagePrefix, dockerRegistry, invokerUseReactivePool, kafkaHost, logsDir, servicePort}
 import whisk.core.connector.{ActivationMessage, CompletionMessage}
 import whisk.core.connector.MessageFeed
 import whisk.core.connector.MessageProducer
@@ -436,7 +436,6 @@ object Invoker {
         logsDir -> null,
         dockerRegistry -> null,
         dockerImagePrefix -> null,
-        invokerUseKubernetes -> false.toString,
         invokerUseReactivePool -> false.toString) ++
         ExecManifest.requiredProperties ++
         WhiskEntityStore.requiredProperties ++
