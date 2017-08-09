@@ -62,7 +62,7 @@ class InvokerReactive(
 
     private val entityStore = WhiskEntityStore.datastore(config)
     private val activationStore = WhiskActivationStore.datastore(config)
-    private val deps = new Dependencies(s"invoker${instance.toInt}", config, ec, logging)
+    private val deps = new Dependencies(instance, config, ec, logging)
     private val factory = SpiLoader.get[ContainerFactory](deps)
     logging.info(this, s"using $factory")
 

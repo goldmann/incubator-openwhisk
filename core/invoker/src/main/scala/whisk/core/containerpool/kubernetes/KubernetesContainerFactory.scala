@@ -25,8 +25,9 @@ import whisk.common.Logging
 import whisk.common.TransactionId
 import whisk.core.containerpool.Container
 import whisk.core.containerpool.ContainerFactory
-import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity.ByteSize
+import whisk.core.entity.ExecManifest.ImageName
+import whisk.core.entity.InstanceId
 import whisk.core.WhiskConfig
 import whisk.spi.Dependencies
 import whisk.spi.SpiFactory
@@ -62,6 +63,7 @@ object KubernetesContainerFactory extends SpiFactory[ContainerFactory] {
     override def apply(deps: Dependencies): ContainerFactory = {
         implicit val ec = deps.get[ExecutionContext]
         implicit val lg = deps.get[Logging]
-        new KubernetesContainerFactory(deps.get[String], deps.get[WhiskConfig])
+        val label = s"invoker${deps.get[InstanceId].toInt}"
+        new KubernetesContainerFactory(label, deps.get[WhiskConfig])
     }
 }
