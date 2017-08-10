@@ -72,7 +72,7 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
     }
 
     def run(image: String, name: String, extraArgs: Seq[String], labels: Map[String, String] = Map())(implicit transid: TransactionId): Future[ContainerId] = {
-        val runArgs = Seq("run", name, "--image", image, "--restart", "Never") ++ extraArgs
+        val runArgs = Seq("run", name, "--image", image, "--restart", "Never", "--limits", "memory=256Mi") ++ extraArgs
         val run = runCmd(runArgs: _*).map {_ => name}.map(ContainerId.apply)
         if (labels.isEmpty) {
             run
