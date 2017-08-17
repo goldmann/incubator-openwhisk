@@ -33,6 +33,7 @@ import whisk.core.invoker.ActionLogDriver
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.blocking
+import scala.concurrent.duration._
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
@@ -71,23 +72,35 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
         Seq(kubectlBin)
     }
 
-    def run(image: String, name: String, extraArgs: Seq[String], labels: Map[String, String] = Map())(implicit transid: TransactionId): Future[ContainerId] = {
-        val runArgs = Seq("run", name, "--image", image, "--generator", "run-pod/v1", "--restart", "Always", "--limits", "memory=256Mi") ++ extraArgs
-        val run = runCmd(runArgs: _*).map {_ => name}.map(ContainerId.apply)
-        if (labels.isEmpty) {
-            run
-        } else {
-            run.flatMap { id => 
-                val args = Seq("label", "pod", id.asString) ++
-                    labels.map {
-                        case (key, value) => s"$key=$value"
-                    }
-                runCmd(args: _*).map {_ => id}
-            }
+    def run(image: String, name: String, environment: Map[String, String] = Map(), labels: Map[String, String] = Map())(implicit transid: TransactionId): Future[ContainerId] = {
+        val environmentArgs = environment.flatMap {
+            case (key, value) => Seq("--env", s"$key=$value")
+        }.toSeq
+
+        val labelArgs = labels.map {
+            case (key, value) => s"$key=$value"
+        } match {
+            case Seq() => Seq()
+            case pairs => Seq("-l") ++ pairs
         }
+
+        val runArgs = Seq("run", name, "--image", image, "--generator", "run-pod/v1", "--restart", "Always", "--limits", "memory=256Mi") ++ environmentArgs ++ labelArgs
+
+        runCmd(runArgs: _*).map {_ => name}.map(ContainerId.apply)
     }
 
-    def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerIp] = getIP(id)
+    def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerIp] = {
+        Future {
+            blocking {
+                val pod = kubeRestClient.pods().withName(id.asString).waitUntilReady(30, SECONDS)
+                ContainerIp(pod.getStatus().getPodIP())
+            }
+        }.recoverWith {
+            case e =>
+                log.error(this, s"Failed to get IP of Pod '${id.asString}' within timeout: ${e.getClass} - ${e.getMessage}")
+                Future.failed(new Exception(s"Failed to get IP of Pod '${id.asString}'"))
+        }
+    }
 
     def rm(id: ContainerId)(implicit transid: TransactionId): Future[Unit] =
         runCmd("delete", "--now", "pod", id.asString).map(_ => ())
@@ -146,21 +159,6 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
         }
     }
 
-    private def getIP(id: ContainerId, tries: Int = 25)(implicit transid: TransactionId): Future[ContainerIp] = {
-        runCmd("get", "pod", id.asString, "--template", "{{.status.podIP}}").flatMap {
-            _ match {
-                case "<no value>" =>
-                    if (tries > 0) {
-                        Thread.sleep(100)
-                        getIP(id, tries - 1)
-                    } else {
-                        Future.failed(new NoSuchElementException)
-                    }
-                case stdout => Future.successful(ContainerIp(stdout))
-            }
-        }
-    }
-
     private def runCmd(args: String*)(implicit transid: TransactionId): Future[String] = {
         val cmd = kubectlCmd ++ args
         val start = transid.started(this, LoggingMarkers.INVOKER_KUBECTL_CMD(args.head), s"running ${cmd.mkString(" ")}")
@@ -172,7 +170,7 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
 }
 
 trait KubernetesApi {
-    def run(image: String, name: String, extraArgs: Seq[String], labels: Map[String, String] = Map())(implicit transid: TransactionId): Future[ContainerId]
+    def run(image: String, name: String, environment: Map[String, String] = Map(), labels: Map[String, String] = Map())(implicit transid: TransactionId): Future[ContainerId]
 
     def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerIp]
 
