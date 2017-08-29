@@ -16,6 +16,8 @@
 
 package whisk.core.containerpool.kubernetes
 
+import akka.actor.ActorSystem
+
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -24,7 +26,8 @@ import scala.concurrent.duration._
 import whisk.common.Logging
 import whisk.common.TransactionId
 import whisk.core.containerpool.Container
-import whisk.core.containerpool.ContainerProvider
+import whisk.core.containerpool.ContainerFactory
+import whisk.core.containerpool.ContainerFactoryProvider
 import whisk.core.entity.ByteSize
 import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity.InstanceId
@@ -33,7 +36,7 @@ import whisk.spi.Dependencies
 import whisk.spi.SpiFactory
 
 
-class KubernetesContainerProvider(label: String, config: WhiskConfig)(implicit ec: ExecutionContext, logger: Logging) extends ContainerProvider {
+class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ec: ExecutionContext, logger: Logging) extends ContainerFactory {
 
     implicit val kubernetes = new KubernetesClient()(ec)
 
@@ -59,11 +62,11 @@ class KubernetesContainerProvider(label: String, config: WhiskConfig)(implicit e
     }
 }
 
-object KubernetesContainerProvider extends SpiFactory[ContainerProvider] {
-    override def apply(deps: Dependencies): ContainerProvider = {
-        implicit val ec = deps.get[ExecutionContext]
-        implicit val lg = deps.get[Logging]
-        val label = s"invoker${deps.get[InstanceId].toInt}"
-        new KubernetesContainerProvider(label, deps.get[WhiskConfig])
-    }
+class KubernetesContainerFactoryProvider extends ContainerFactoryProvider {
+    override def getContainerFactory(instance: InstanceId, actorSystem: ActorSystem, logging: Logging, config: WhiskConfig): ContainerFactory =
+        new KubernetesContainerFactory(s"invoker${instance.toInt}", config)(actorSystem.dispatcher, logging)
+}
+
+object KubernetesContainerFactoryProvider extends SpiFactory[ContainerFactoryProvider] {
+    override def apply(dependencies: Dependencies): ContainerFactoryProvider = new KubernetesContainerFactoryProvider()
 }

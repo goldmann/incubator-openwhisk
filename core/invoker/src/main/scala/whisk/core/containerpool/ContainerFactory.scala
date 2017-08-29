@@ -17,14 +17,22 @@
 
 package whisk.core.containerpool
 
+import akka.actor.ActorSystem
 import scala.concurrent.Future
 
 import whisk.common.TransactionId
+import whisk.common.Logging
+import whisk.core.WhiskConfig
 import whisk.core.entity.ByteSize
 import whisk.core.entity.ExecManifest.ImageName
+import whisk.core.entity.InstanceId
 import whisk.spi.Spi
 
-trait ContainerProvider extends Spi {
+trait ContainerFactory {
     def create(tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize): Future[Container]
     def cleanup(): Unit
+}
+
+trait ContainerFactoryProvider extends Spi {
+    def getContainerFactory(instance:InstanceId, actorSystem:ActorSystem, logging:Logging, config:WhiskConfig): ContainerFactory
 }
