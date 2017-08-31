@@ -28,10 +28,13 @@ import org.scalatest.FlatSpec
 import org.scalatest.Matchers
 
 import common.StreamLogging
+
+import akka.http.scaladsl.testkit.ScalatestRouteTest
+import akka.http.scaladsl.testkit.RouteTestTimeout
+
 import spray.json.DefaultJsonProtocol
 import spray.json.JsString
-import spray.routing.HttpService
-import spray.testkit.ScalatestRouteTest
+
 import whisk.common.TransactionCounter
 import whisk.common.TransactionId
 import whisk.core.WhiskConfig
@@ -39,6 +42,7 @@ import whisk.core.connector.ActivationMessage
 import whisk.core.controller.RestApiCommons
 import whisk.core.controller.WhiskServices
 import whisk.core.database.DocumentFactory
+import whisk.core.database.CacheChangeNotification
 import whisk.core.database.test.DbUtils
 import whisk.core.entitlement._
 import whisk.core.entity._
@@ -55,14 +59,12 @@ protected trait ControllerTestCommon
     with DbUtils
     with ExecHelpers
     with WhiskServices
-    with HttpService
     with StreamLogging {
 
     override val instance = InstanceId(0)
     override val numberOfInstances = 1
     val activeAckTopicIndex = InstanceId(0)
 
-    override val actorRefFactory = null
     implicit val routeTestTimeout = RouteTestTimeout(90 seconds)
 
     override implicit val actorSystem = system // defined in ScalatestRouteTest
@@ -82,6 +84,12 @@ protected trait ControllerTestCommon
         // need a static activation id to test activations api
         private val fixedId = ActivationId()
         override def make = fixedId
+    }
+
+    implicit val cacheChangeNotification = Some {
+        new CacheChangeNotification {
+            override def apply(k: CacheKey): Future[Unit] = Future.successful(())
+        }
     }
 
     val entityStore = WhiskEntityStore.datastore(whiskConfig)
@@ -168,7 +176,6 @@ protected trait ControllerTestCommon
         with DefaultJsonProtocol {
         implicit val serdes = jsonFormat5(BadEntity.apply)
         override val cacheEnabled = true
-        override def cacheKeyForUpdate(w: BadEntity) = w.docid.asDocInfo
     }
 }
 
@@ -179,7 +186,8 @@ class DegenerateLoadBalancerService(config: WhiskConfig)(implicit ec: ExecutionC
     // unit tests that need an activation via active ack/fast path should set this to value expected
     var whiskActivationStub: Option[(FiniteDuration, WhiskActivation)] = None
 
-    override def getActiveNamespaceActivationCounts: Map[UUID, Int] = Map.empty
+    override def totalActiveActivations = 0
+    override def activeActivationsFor(namespace: UUID) = 0
 
     override def publish(action: ExecutableWhiskAction, msg: ActivationMessage)(implicit transid: TransactionId): Future[Future[Either[ActivationId, WhiskActivation]]] =
         Future.successful {

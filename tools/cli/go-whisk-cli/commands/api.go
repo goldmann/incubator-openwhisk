@@ -58,7 +58,7 @@ func IsValidApiVerb(verb string) (error, bool) {
                 map[string]interface{}{
                     "verb": verb,
                     "verbs": reflect.ValueOf(whisk.ApiVerbs).MapKeys()})
-        whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXITCODE_ERR_GENERAL,
+        whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXIT_CODE_ERR_GENERAL,
             whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
         return whiskErr, false
     }
@@ -72,7 +72,7 @@ func hasPathPrefix(path string) (error, bool) {
                 map[string]interface{}{
                     "path": path,
                 })
-        whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXITCODE_ERR_GENERAL,
+        whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXIT_CODE_ERR_GENERAL,
             whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
         return whiskErr, false
     }
@@ -92,7 +92,6 @@ func isValidRelpath(relpath string) (error, bool) {
     }
     return nil, true
 }
-
 
 /*
  * Pull the managedUrl (external API URL) from the API configuration
@@ -128,12 +127,12 @@ var apiCreateCmd = &cobra.Command{
     RunE: func(cmd *cobra.Command, args []string) error {
         var api *whisk.Api
         var err error
-        var qname *QualifiedName
+        var qname = new(QualifiedName)
 
         if (len(args) == 0 && flags.api.configfile == "") {
             whisk.Debug(whisk.DbgError, "No swagger file and no arguments\n")
             errMsg := wski18n.T("Invalid argument(s). Specify a swagger file or specify an API base path with an API path, an API verb, and an action name.")
-            whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXITCODE_ERR_GENERAL,
+            whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXIT_CODE_ERR_GENERAL,
                 whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
             return whiskErr
         } else if (len(args) == 0 && flags.api.configfile != "") {
@@ -141,7 +140,7 @@ var apiCreateCmd = &cobra.Command{
             if err != nil {
                 whisk.Debug(whisk.DbgError, "parseSwaggerApi() error: %s\n", err)
                 errMsg := wski18n.T("Unable to parse swagger file: {{.err}}", map[string]interface{}{"err": err})
-                whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXITCODE_ERR_GENERAL,
+                whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXIT_CODE_ERR_GENERAL,
                     whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
                 return whiskErr
             }
@@ -155,7 +154,7 @@ var apiCreateCmd = &cobra.Command{
                 whisk.Debug(whisk.DbgError, "parseApi(%s, %s) error: %s\n", cmd, args, err)
                 errMsg := wski18n.T("Unable to parse api command arguments: {{.err}}",
                     map[string]interface{}{"err": err})
-                whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXITCODE_ERR_GENERAL,
+                whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXIT_CODE_ERR_GENERAL,
                     whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
                 return whiskErr
             }
@@ -164,7 +163,7 @@ var apiCreateCmd = &cobra.Command{
             err = isWebAction(client, *qname)
             if err != nil {
                 whisk.Debug(whisk.DbgError, "isWebAction(%v) is false: %s\n", qname, err)
-                whiskErr := whisk.MakeWskError(err, whisk.EXITCODE_ERR_GENERAL, whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
+                whiskErr := whisk.MakeWskError(err, whisk.EXIT_CODE_ERR_GENERAL, whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
                 return whiskErr
             }
         }
@@ -187,7 +186,7 @@ var apiCreateCmd = &cobra.Command{
         if err != nil {
             whisk.Debug(whisk.DbgError, "client.Apis.Insert(%#v, false) error: %s\n", api, err)
             errMsg := wski18n.T("Unable to create API: {{.err}}", map[string]interface{}{"err": err})
-            whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXITCODE_ERR_GENERAL,
+            whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXIT_CODE_ERR_GENERAL,
                 whisk.DISPLAY_MSG, whisk.NO_DISPLAY_USAGE)
             return whiskErr
         }
@@ -268,7 +267,7 @@ var apiGetCmd = &cobra.Command{
              strings.ToLower(flags.common.format) != formatOptionYaml &&
              strings.ToLower(flags.common.format) != formatOptionJson) {
             errMsg := wski18n.T("Invalid format type: {{.type}}", map[string]interface{}{"type": flags.common.format})
-            whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXITCODE_ERR_GENERAL,
+            whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXIT_CODE_ERR_GENERAL,
                 whisk.DISPLAY_MSG, whisk.NO_DISPLAY_USAGE)
             return whiskErr
         }
@@ -287,7 +286,7 @@ var apiGetCmd = &cobra.Command{
         if err != nil {
             whisk.Debug(whisk.DbgError, "client.Apis.Get(%#v, %#v) error: %s\n", apiGetReq, apiGetReqOptions, err)
             errMsg := wski18n.T("Unable to get API '{{.name}}': {{.err}}", map[string]interface{}{"name": args[0], "err": err})
-            whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXITCODE_ERR_GENERAL,
+            whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXIT_CODE_ERR_GENERAL,
                 whisk.DISPLAY_MSG, whisk.NO_DISPLAY_USAGE)
             return whiskErr
         }
@@ -320,7 +319,7 @@ var apiGetCmd = &cobra.Command{
                     map[string]interface{}{"apiname": args[0]})
             }
 
-            whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXITCODE_ERR_GENERAL,
+            whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXIT_CODE_ERR_GENERAL,
                 whisk.DISPLAY_MSG, whisk.NO_DISPLAY_USAGE)
             return whiskErr
         }
@@ -334,7 +333,7 @@ var apiGetCmd = &cobra.Command{
             if err != nil {
                 whisk.Debug(whisk.DbgError, "yaml.JSONToYAML() error: %s\n", err)
                 errMsg := wski18n.T("Unable to convert API into YAML: {{.err}}", map[string]interface{}{"err": err})
-                whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXITCODE_ERR_GENERAL,
+                whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXIT_CODE_ERR_GENERAL,
                     whisk.DISPLAY_MSG, whisk.NO_DISPLAY_USAGE)
                 return whiskErr
             }
@@ -397,7 +396,7 @@ var apiDeleteCmd = &cobra.Command{
         if err != nil {
             whisk.Debug(whisk.DbgError, "client.Apis.Delete(%#v, %#v) error: %s\n", apiDeleteReq, apiDeleteReqOptions, err)
             errMsg := wski18n.T("Unable to delete API: {{.err}}", map[string]interface{}{"err": err})
-            whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXITCODE_ERR_GENERAL,
+            whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXIT_CODE_ERR_GENERAL,
                 whisk.DISPLAY_MSG, whisk.NO_DISPLAY_USAGE)
             return whiskErr
         }
@@ -445,6 +444,8 @@ var apiListCmd = &cobra.Command{
         var retApiArray *whisk.RetApiArray
         var apiPath string
         var apiVerb string
+        var orderFilteredList []whisk.ApiFilteredList
+        var orderFilteredRow []whisk.ApiFilteredRow
 
         if whiskErr := checkArgs(args, 0, 3, "Api list",
             wski18n.T("Optional parameters are: API base path (or API name), API relative path and operation.")); whiskErr != nil {
@@ -467,7 +468,7 @@ var apiListCmd = &cobra.Command{
             if err != nil {
                 whisk.Debug(whisk.DbgError, "client.Apis.List(%#v) error: %s\n", apiListReqOptions, err)
                 errMsg := wski18n.T("Unable to obtain the API list: {{.err}}", map[string]interface{}{"err": err})
-                whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXITCODE_ERR_GENERAL,
+                whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXIT_CODE_ERR_GENERAL,
                     whisk.DISPLAY_MSG, whisk.NO_DISPLAY_USAGE)
                 return whiskErr
             }
@@ -510,7 +511,7 @@ var apiListCmd = &cobra.Command{
             if err != nil {
                 whisk.Debug(whisk.DbgError, "client.Apis.Get(%#v, %#v) error: %s\n", apiGetReq, apiGetReqOptions, err)
                 errMsg := wski18n.T("Unable to obtain the API list: {{.err}}", map[string]interface{}{"err": err})
-                whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXITCODE_ERR_GENERAL,
+                whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXIT_CODE_ERR_GENERAL,
                     whisk.DISPLAY_MSG, whisk.NO_DISPLAY_USAGE)
                 return whiskErr
             }
@@ -518,7 +519,8 @@ var apiListCmd = &cobra.Command{
             // Cast to a common type to allow for code to print out apilist response or apiget response
             retApiArray = (*whisk.RetApiArray)(retApi)
         }
-
+        //Checks for any order flags being passed
+        sortByName := flags.common.nameSort
         // Display the APIs - applying any specified filtering
         if (flags.common.full) {
             fmt.Fprintf(color.Output,
@@ -526,10 +528,10 @@ var apiListCmd = &cobra.Command{
                     map[string]interface{}{
                         "ok": color.GreenString("ok:"),
                     }))
-
-            for i:=0; i<len(retApiArray.Apis); i++ {
-                printFilteredListApi(retApiArray.Apis[i].ApiValue, apiPath, apiVerb)
+            for i := 0; i < len(retApiArray.Apis); i++ {
+                orderFilteredList = append(orderFilteredList, genFilteredList(retApiArray.Apis[i].ApiValue, apiPath, apiVerb)...)
             }
+            printList(orderFilteredList, sortByName)  // Sends an array of structs that contains specifed variables that are not truncated
         } else {
             if (len(retApiArray.Apis) > 0) {
                 // Dynamically create the output format string based on the maximum size of the
@@ -542,17 +544,17 @@ var apiListCmd = &cobra.Command{
                         map[string]interface{}{
                             "ok": color.GreenString("ok:"),
                         }))
-                fmt.Printf(fmtString, "Action", "Verb", "API Name", "URL")
-                for i:=0; i<len(retApiArray.Apis); i++ {
-                    printFilteredListRow(retApiArray.Apis[i].ApiValue, apiPath, apiVerb, maxActionNameSize, maxApiNameSize)
+                for i := 0; i < len(retApiArray.Apis); i++ {
+                    orderFilteredRow = append(orderFilteredRow, genFilteredRow(retApiArray.Apis[i].ApiValue, apiPath, apiVerb, maxActionNameSize, maxApiNameSize)...)
                 }
+                printList(orderFilteredRow, sortByName)  // Sends an array of structs that contains specifed variables that are truncated
             } else {
                 fmt.Fprintf(color.Output,
                     wski18n.T("{{.ok}} APIs\n",
                         map[string]interface{}{
                             "ok": color.GreenString("ok:"),
                         }))
-                fmt.Printf(fmtString, "Action", "Verb", "API Name", "URL")
+                printList(orderFilteredRow, sortByName)  // Sends empty orderFilteredRow so that defaultHeader can be printed
             }
         }
 
@@ -560,24 +562,25 @@ var apiListCmd = &cobra.Command{
     },
 }
 
-/*
- * Takes an API object (containing one more more single basepath/relpath/operation triplets)
- * and some filtering configuration.  For each API endpoint matching the filtering criteria, display
- * each endpoint's configuration - one line per configuration property (action name, verb, api name, api gw url)
- */
-func printFilteredListApi(resultApi *whisk.RetApi, apiPath string, apiVerb string) {
+// genFilteredList(resultApi, api) generates an array of
+//      ApiFilteredLists for the purpose of ordering and printing in a list form.
+//      NOTE: genFilteredRow() generates entries with one line per configuration
+//         property (action name, verb, api name, api gw url)
+func genFilteredList(resultApi *whisk.RetApi, apiPath string, apiVerb string) []whisk.ApiFilteredList{
+    var orderInfo whisk.ApiFilteredList
+    var orderInfoArr []whisk.ApiFilteredList
     baseUrl := strings.TrimSuffix(resultApi.BaseUrl, "/")
     apiName := resultApi.Swagger.Info.Title
     basePath := resultApi.Swagger.BasePath
     if (resultApi.Swagger != nil && resultApi.Swagger.Paths != nil) {
         for path, _ := range resultApi.Swagger.Paths {
-            whisk.Debug(whisk.DbgInfo, "printFilteredListApi: comparing api relpath: %s\n", path)
+            whisk.Debug(whisk.DbgInfo, "genFilteredList: comparing api relpath: %s\n", path)
             if ( len(apiPath) == 0 || path == apiPath) {
-                whisk.Debug(whisk.DbgInfo, "printFilteredListApi: relpath matches\n")
+                whisk.Debug(whisk.DbgInfo, "genFilteredList: relpath matches\n")
                 for op, opv  := range resultApi.Swagger.Paths[path] {
-                    whisk.Debug(whisk.DbgInfo, "printFilteredListApi: comparing operation: '%s'\n", op)
+                    whisk.Debug(whisk.DbgInfo, "genFilteredList: comparing operation: '%s'\n", op)
                     if ( len(apiVerb) == 0 || strings.ToLower(op) == strings.ToLower(apiVerb)) {
-                        whisk.Debug(whisk.DbgInfo, "printFilteredListApi: operation matches: %#v\n", opv)
+                        whisk.Debug(whisk.DbgInfo, "genFilteredList: operation matches: %#v\n", opv)
                         var actionName string
                         if (opv.XOpenWhisk == nil) {
                             actionName = ""
@@ -586,38 +589,36 @@ func printFilteredListApi(resultApi *whisk.RetApi, apiPath string, apiVerb strin
                         } else {
                             actionName = "/"+opv.XOpenWhisk.Namespace+"/"+opv.XOpenWhisk.ActionName
                         }
-                        fmt.Printf("%s: %s\n", wski18n.T("Action"), actionName)
-                        fmt.Printf("  %s: %s\n", wski18n.T("API Name"), apiName)
-                        fmt.Printf("  %s: %s\n", wski18n.T("Base path"), basePath)
-                        fmt.Printf("  %s: %s\n", wski18n.T("Path"), path)
-                        fmt.Printf("  %s: %s\n", wski18n.T("Verb"), op)
-                        fmt.Printf("  %s: %s\n", wski18n.T("URL"), baseUrl+path)
+                        orderInfo = AssignListInfo(actionName, op, apiName, basePath, path, baseUrl+path)
+                        whisk.Debug(whisk.DbgInfo, "Appening to orderInfoArr: %s %s\n", orderInfo.RelPath)
+                        orderInfoArr = append(orderInfoArr, orderInfo)
                     }
                 }
             }
         }
     }
+    return orderInfoArr
 }
 
-/*
- * Takes an API object (containing one more more single basepath/relpath/operation triplets)
- * and some filtering configuration.  For each API matching the filtering criteria, display the API
- * on a single line (action name, verb, api name, api gw url).
- *
- * NOTE: Large action name and api name value will be truncated by their associated max size parameters.
- */
-func printFilteredListRow(resultApi *whisk.RetApi, apiPath string, apiVerb string, maxActionNameSize int, maxApiNameSize int) {
+// genFilteredRow(resultApi, api, maxApiNameSize, maxApiNameSize) generates an array of
+//      ApiFilteredRows for the purpose of ordering and printing in a list form by parsing and
+//      initializing vaules for each individual ApiFilteredRow struct.
+//      NOTE: Large action and api name values will be truncated by their associated max size parameters.
+func genFilteredRow(resultApi *whisk.RetApi, apiPath string, apiVerb string, maxActionNameSize int, maxApiNameSize int) []whisk.ApiFilteredRow {
+    var orderInfo whisk.ApiFilteredRow
+    var orderInfoArr []whisk.ApiFilteredRow
     baseUrl := strings.TrimSuffix(resultApi.BaseUrl, "/")
     apiName := resultApi.Swagger.Info.Title
+    basePath := resultApi.Swagger.BasePath
     if (resultApi.Swagger != nil && resultApi.Swagger.Paths != nil) {
         for path, _ := range resultApi.Swagger.Paths {
-            whisk.Debug(whisk.DbgInfo, "printFilteredListRow: comparing api relpath: %s\n", path)
+            whisk.Debug(whisk.DbgInfo, "genFilteredRow: comparing api relpath: %s\n", path)
             if ( len(apiPath) == 0 || path == apiPath) {
-                whisk.Debug(whisk.DbgInfo, "printFilteredListRow: relpath matches\n")
+                whisk.Debug(whisk.DbgInfo, "genFilteredRow: relpath matches\n")
                 for op, opv  := range resultApi.Swagger.Paths[path] {
-                    whisk.Debug(whisk.DbgInfo, "printFilteredListRow: comparing operation: '%s'\n", op)
+                    whisk.Debug(whisk.DbgInfo, "genFilteredRow: comparing operation: '%s'\n", op)
                     if ( len(apiVerb) == 0 || strings.ToLower(op) == strings.ToLower(apiVerb)) {
-                        whisk.Debug(whisk.DbgInfo, "printFilteredListRow: operation matches: %#v\n", opv)
+                        whisk.Debug(whisk.DbgInfo, "genFilteredRow: operation matches: %#v\n", opv)
                         var actionName string
                         if (opv.XOpenWhisk == nil) {
                             actionName = ""
@@ -626,21 +627,51 @@ func printFilteredListRow(resultApi *whisk.RetApi, apiPath string, apiVerb strin
                         } else {
                             actionName = "/"+opv.XOpenWhisk.Namespace+"/"+opv.XOpenWhisk.ActionName
                         }
-                        fmt.Printf(fmtString,
-                            actionName[0 : min(len(actionName), maxActionNameSize)],
-                            op,
-                            apiName[0 : min(len(apiName), maxApiNameSize)],
-                            baseUrl+path)
+                        orderInfo = AssignRowInfo(actionName[0 : min(len(actionName), maxActionNameSize)], op, apiName[0 : min(len(apiName), maxApiNameSize)], basePath, path, baseUrl+path)
+                        orderInfo.FmtString = fmtString
+                        whisk.Debug(whisk.DbgInfo, "Appening to orderInfoArr: %s %s\n", orderInfo.RelPath)
+                        orderInfoArr = append(orderInfoArr, orderInfo)
                     }
                 }
             }
         }
     }
+    return orderInfoArr
+}
+
+// AssignRowInfo(actionName, verb, apiName, basePath, relPath, url) assigns
+//      the given vaules to and initializes an ApiFilteredRow struct, then returns it.
+func AssignRowInfo(actionName string, verb string, apiName string, basePath string, relPath string, url string) whisk.ApiFilteredRow {
+    var orderInfo whisk.ApiFilteredRow
+
+    orderInfo.ActionName = actionName
+    orderInfo.Verb = verb
+    orderInfo.ApiName = apiName
+    orderInfo.BasePath = basePath
+    orderInfo.RelPath = relPath
+    orderInfo.Url = url
+
+    return orderInfo
+}
+
+// AssignListInfo(actionName, verb, apiName, basePath, relPath, url) assigns
+//      the given vaules to and initializes an ApiFilteredList struct, then returns it.
+func AssignListInfo(actionName string, verb string, apiName string, basePath string, relPath string, url string) whisk.ApiFilteredList {
+    var orderInfo whisk.ApiFilteredList
+
+    orderInfo.ActionName = actionName
+    orderInfo.Verb = verb
+    orderInfo.ApiName = apiName
+    orderInfo.BasePath = basePath
+    orderInfo.RelPath = relPath
+    orderInfo.Url = url
+
+    return orderInfo
 }
 
 func getLargestActionNameSize(retApiArray *whisk.RetApiArray, apiPath string, apiVerb string) int {
     var maxNameSize = 0
-    for i:=0; i<len(retApiArray.Apis); i++ {
+    for i := 0; i < len(retApiArray.Apis); i++ {
         var resultApi = retApiArray.Apis[i].ApiValue
         if (resultApi.Swagger != nil && resultApi.Swagger.Paths != nil) {
             for path, _ := range resultApi.Swagger.Paths {
@@ -673,7 +704,7 @@ func getLargestActionNameSize(retApiArray *whisk.RetApiArray, apiPath string, ap
 
 func getLargestApiNameSize(retApiArray *whisk.RetApiArray, apiPath string, apiVerb string) int {
     var maxNameSize = 0
-    for i:=0; i<len(retApiArray.Apis); i++ {
+    for i := 0; i < len(retApiArray.Apis); i++ {
         var resultApi = retApiArray.Apis[i].ApiValue
         apiName := resultApi.Swagger.Info.Title
         if (resultApi.Swagger != nil && resultApi.Swagger.Paths != nil) {
@@ -746,22 +777,21 @@ func parseApi(cmd *cobra.Command, args []string) (*whisk.Api, *QualifiedName, er
     }
 
     // Is the specified action name valid?
-    var qName QualifiedName
+    var qName = new(QualifiedName)
     if (len(args) == 3) {
-        qName = QualifiedName{}
-        qName, err = parseQualifiedName(args[2])
+        qName, err = NewQualifiedName(args[2])
         if err != nil {
-            whisk.Debug(whisk.DbgError, "parseQualifiedName(%s) failed: %s\n", args[2], err)
+            whisk.Debug(whisk.DbgError, "NewQualifiedName(%s) failed: %s\n", args[2], err)
             errMsg := wski18n.T("'{{.name}}' is not a valid action name: {{.err}}",
                 map[string]interface{}{"name": args[2], "err": err})
-            whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXITCODE_ERR_GENERAL,
+            whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXIT_CODE_ERR_GENERAL,
                 whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
             return nil, nil, whiskErr
         }
-        if (qName.entityName == "") {
+        if (qName.GetEntityName() == "") {
             whisk.Debug(whisk.DbgError, "Action name '%s' is invalid\n", args[2])
             errMsg := wski18n.T("'{{.name}}' is not a valid action name.", map[string]interface{}{"name": args[2]})
-            whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXITCODE_ERR_GENERAL,
+            whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXIT_CODE_ERR_GENERAL,
                 whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
             return nil, nil, whiskErr
         }
@@ -772,7 +802,7 @@ func parseApi(cmd *cobra.Command, args []string) (*whisk.Api, *QualifiedName, er
             // Specifying API name as argument AND as a --apiname option value is invalid
             whisk.Debug(whisk.DbgError, "API is specified as an argument '%s' and as a flag '%s'\n", basepath, flags.api.apiname)
             errMsg := wski18n.T("An API name can only be specified once.")
-            whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXITCODE_ERR_GENERAL,
+            whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXIT_CODE_ERR_GENERAL,
                 whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
             return nil, nil, whiskErr
         }
@@ -782,22 +812,22 @@ func parseApi(cmd *cobra.Command, args []string) (*whisk.Api, *QualifiedName, er
     api.Namespace = client.Config.Namespace
     api.Action = new(whisk.ApiAction)
     var urlActionPackage string
-    if (len(qName.packageName) > 0) {
-        urlActionPackage = qName.packageName
+    if (len(qName.GetPackageName()) > 0) {
+        urlActionPackage = qName.GetPackageName()
     } else {
         urlActionPackage = "default"
     }
-    api.Action.BackendUrl = "https://" + client.Config.Host + "/api/v1/web/" + qName.namespace + "/" + urlActionPackage + "/" + qName.entity + ".http"
+    api.Action.BackendUrl = "https://" + client.Config.Host + "/api/v1/web/" + qName.GetNamespace() + "/" + urlActionPackage + "/" + qName.GetEntity() + ".http"
     api.Action.BackendMethod = api.GatewayMethod
-    api.Action.Name = qName.entityName
-    api.Action.Namespace = qName.namespace
+    api.Action.Name = qName.GetEntityName()
+    api.Action.Namespace = qName.GetNamespace()
     api.Action.Auth = client.Config.AuthToken
     api.ApiName = apiname
     api.GatewayBasePath = basepath
     if (!basepathArgIsApiName) { api.Id = "API:"+api.Namespace+":"+api.GatewayBasePath }
 
     whisk.Debug(whisk.DbgInfo, "Parsed api struct: %#v\n", api)
-    return api, &qName, nil
+    return api, qName, nil
 }
 
 func parseSwaggerApi() (*whisk.Api, error) {
@@ -805,7 +835,7 @@ func parseSwaggerApi() (*whisk.Api, error) {
     if ( len(flags.api.configfile) == 0 ) {
         whisk.Debug(whisk.DbgError, "No swagger file is specified\n")
         errMsg := wski18n.T("A configuration file was not specified.")
-        whiskErr := whisk.MakeWskError(errors.New(errMsg),whisk.EXITCODE_ERR_GENERAL,
+        whiskErr := whisk.MakeWskError(errors.New(errMsg),whisk.EXIT_CODE_ERR_GENERAL,
             whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
         return nil, whiskErr
     }
@@ -815,7 +845,7 @@ func parseSwaggerApi() (*whisk.Api, error) {
         whisk.Debug(whisk.DbgError, "readFile(%s) error: %s\n", flags.api.configfile, err)
         errMsg := wski18n.T("Error reading swagger file '{{.name}}': {{.err}}",
             map[string]interface{}{"name": flags.api.configfile, "err": err})
-        whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXITCODE_ERR_GENERAL,
+        whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXIT_CODE_ERR_GENERAL,
             whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
         return nil, whiskErr
     }
@@ -828,7 +858,7 @@ func parseSwaggerApi() (*whisk.Api, error) {
         if err != nil {
             whisk.Debug(whisk.DbgError, "yaml.YAMLToJSON() error: %s\n", err)
             errMsg := wski18n.T("Unable to parse YAML configuration file: {{.err}}", map[string]interface{}{"err": err})
-            whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXITCODE_ERR_GENERAL,
+            whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXIT_CODE_ERR_GENERAL,
                 whisk.DISPLAY_MSG, whisk.NO_DISPLAY_USAGE)
             return nil, whiskErr
         }
@@ -842,21 +872,21 @@ func parseSwaggerApi() (*whisk.Api, error) {
         whisk.Debug(whisk.DbgError, "JSON parse of `%s' error: %s\n", flags.api.configfile, err)
         errMsg := wski18n.T("Error parsing swagger file '{{.name}}': {{.err}}",
             map[string]interface{}{"name": flags.api.configfile, "err": err})
-        whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXITCODE_ERR_GENERAL,
+        whiskErr := whisk.MakeWskErrorFromWskError(errors.New(errMsg), err, whisk.EXIT_CODE_ERR_GENERAL,
             whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
         return nil, whiskErr
     }
     if (swaggerObj.BasePath == "" || swaggerObj.SwaggerName == "" || swaggerObj.Info == nil || swaggerObj.Paths == nil) {
         whisk.Debug(whisk.DbgError, "Swagger file is invalid.\n", flags.api.configfile, err)
         errMsg := wski18n.T("Swagger file is invalid (missing basePath, info, paths, or swagger fields)")
-        whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXITCODE_ERR_GENERAL,
+        whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXIT_CODE_ERR_GENERAL,
             whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
         return nil, whiskErr
     }
     if _, ok := isValidBasepath(swaggerObj.BasePath); !ok {
         whisk.Debug(whisk.DbgError, "Swagger file basePath is invalid.\n", flags.api.configfile, err)
         errMsg := wski18n.T("Swagger file basePath must start with a leading slash (/)")
-        whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXITCODE_ERR_GENERAL,
+        whiskErr := whisk.MakeWskError(errors.New(errMsg), whisk.EXIT_CODE_ERR_GENERAL,
             whisk.DISPLAY_MSG, whisk.DISPLAY_USAGE)
         return nil, whiskErr
     }
@@ -880,7 +910,7 @@ func getAccessToken() (string, error) {
     } else {
         whisk.Debug(whisk.DbgError, "readProps(%s) failed: %s\n", Properties.PropsFile, err)
         errStr := wski18n.T("Unable to obtain the API Gateway access token from the properties file: {{.err}}", map[string]interface{}{"err": err})
-        err = whisk.MakeWskError(errors.New(errStr), whisk.EXITCODE_ERR_GENERAL, whisk.DISPLAY_MSG, whisk.NO_DISPLAY_USAGE)
+        err = whisk.MakeWskError(errors.New(errStr), whisk.EXIT_CODE_ERR_GENERAL, whisk.DISPLAY_MSG, whisk.NO_DISPLAY_USAGE)
     }
 
     return token, err
@@ -897,12 +927,12 @@ func getUserContextId() (string, error) {
         } else {
             whisk.Debug(whisk.DbgError, "AUTH property not set in properties file: %s\n", Properties.PropsFile)
             errStr := wski18n.T("Authorization key is not configured (--auth is required)")
-            err = whisk.MakeWskError(errors.New(errStr), whisk.EXITCODE_ERR_GENERAL, whisk.DISPLAY_MSG, whisk.NO_DISPLAY_USAGE)
+            err = whisk.MakeWskError(errors.New(errStr), whisk.EXIT_CODE_ERR_GENERAL, whisk.DISPLAY_MSG, whisk.NO_DISPLAY_USAGE)
         }
     } else {
         whisk.Debug(whisk.DbgError, "readProps(%s) failed: %s\n", Properties.PropsFile, err)
         errStr := wski18n.T("Unable to obtain the auth key from the properties file: {{.err}}", map[string]interface{}{"err": err})
-        err = whisk.MakeWskError(errors.New(errStr), whisk.EXITCODE_ERR_GENERAL, whisk.DISPLAY_MSG, whisk.NO_DISPLAY_USAGE)
+        err = whisk.MakeWskError(errors.New(errStr), whisk.EXIT_CODE_ERR_GENERAL, whisk.DISPLAY_MSG, whisk.NO_DISPLAY_USAGE)
     }
 
     return guid, err
@@ -921,6 +951,7 @@ func init() {
     apiGetCmd.Flags().StringVarP(&flags.common.format, "format", "", formatOptionJson, wski18n.T("Specify the API output `TYPE`, either json or yaml"))
     apiListCmd.Flags().IntVarP(&flags.common.skip, "skip", "s", 0, wski18n.T("exclude the first `SKIP` number of actions from the result"))
     apiListCmd.Flags().IntVarP(&flags.common.limit, "limit", "l", 30, wski18n.T("only return `LIMIT` number of actions from the collection"))
+    apiListCmd.Flags().BoolVarP(&flags.common.nameSort, "name-sort", "n", false, wski18n.T("sorts a list alphabetically by order of [BASE_PATH | API_NAME], API_PATH, then API_VERB; only applicable within the limit/skip returned entity block"))
     apiListCmd.Flags().BoolVarP(&flags.common.full, "full", "f", false, wski18n.T("display full description of each API"))
     apiCmd.AddCommand(
         apiCreateCmd,

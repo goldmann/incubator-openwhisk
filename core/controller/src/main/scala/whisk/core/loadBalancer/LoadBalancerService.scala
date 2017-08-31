@@ -18,6 +18,8 @@
 package whisk.core.loadBalancer
 
 import java.nio.charset.StandardCharsets
+
+import scala.annotation.tailrec
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -25,43 +27,44 @@ import scala.concurrent.Promise
 import scala.concurrent.duration.DurationInt
 import scala.util.Failure
 import scala.util.Success
+
 import org.apache.kafka.clients.producer.RecordMetadata
+
 import akka.actor.ActorRefFactory
 import akka.actor.ActorSystem
 import akka.actor.Props
-import akka.pattern.ask
 import akka.util.Timeout
+import akka.pattern.ask
+
 import whisk.common.Logging
 import whisk.common.LoggingMarkers
 import whisk.common.TransactionId
 import whisk.core.WhiskConfig
 import whisk.core.WhiskConfig._
-import whisk.core.connector.MessagingProvider
 import whisk.core.connector.{ ActivationMessage, CompletionMessage }
 import whisk.core.connector.MessageFeed
 import whisk.core.connector.MessageProducer
+import whisk.core.connector.MessagingProvider
 import whisk.core.database.NoDocumentException
 import whisk.core.entity.{ ActivationId, WhiskActivation }
-import whisk.core.entity.InstanceId
+import whisk.core.entity.EntityName
 import whisk.core.entity.ExecutableWhiskAction
+import whisk.core.entity.Identity
+import whisk.core.entity.InstanceId
 import whisk.core.entity.UUID
 import whisk.core.entity.WhiskAction
 import whisk.core.entity.types.EntityStore
-import scala.annotation.tailrec
-import whisk.core.entity.EntityName
-import whisk.core.entity.Identity
 import whisk.spi.SpiLoader
 
 trait LoadBalancer {
 
     val activeAckTimeoutGrace = 1.minute
 
-    /**
-     * Retrieves a per namespace id map of counts representing in-flight activations as seen by the load balancer
-     *
-     * @return a map where the key is the namespace id and the long is total issued activations by that namespace
-     */
-    def getActiveNamespaceActivationCounts: Map[UUID, Int]
+    /** Gets the number of in-flight activations for a specific user. */
+    def activeActivationsFor(namspace: UUID): Int
+
+    /** Gets the number of in-flight activations in the system. */
+    def totalActiveActivations: Int
 
     /**
      * Publishes activation message on internal bus for an invoker to pick up.
@@ -96,7 +99,9 @@ class LoadBalancerService(
 
     private val loadBalancerData = new LoadBalancerData()
 
-    override def getActiveNamespaceActivationCounts: Map[UUID, Int] = loadBalancerData.activationCountByNamespace
+    override def activeActivationsFor(namespace: UUID) = loadBalancerData.activationCountOn(namespace)
+
+    override def totalActiveActivations = loadBalancerData.totalActivationCount
 
     override def publish(action: ExecutableWhiskAction, msg: ActivationMessage)(
         implicit transid: TransactionId): Future[Future[Either[ActivationId, WhiskActivation]]] = {
@@ -161,9 +166,9 @@ class LoadBalancerService(
     private def createTestActionForInvokerHealth(db: EntityStore, action: WhiskAction): Future[Unit] = {
         implicit val tid = TransactionId.loadbalancer
         WhiskAction.get(db, action.docid).flatMap { oldAction =>
-            WhiskAction.put(db, action.revision(oldAction.rev))
+            WhiskAction.put(db, action.revision(oldAction.rev))(tid, notifier = None)
         }.recover {
-            case _: NoDocumentException => WhiskAction.put(db, action)
+            case _: NoDocumentException => WhiskAction.put(db, action)(tid, notifier = None)
         }.map(_ => {}).andThen {
             case Success(_) => logging.info(this, "test action for invoker health now exists")
             case Failure(e) => logging.error(this, s"error creating test action for invoker health: $e")
@@ -171,8 +176,8 @@ class LoadBalancerService(
     }
 
     /** Gets a producer which can publish messages to the kafka bus. */
-    private val messasgingProvider = SpiLoader.get[MessagingProvider]()
-    private val messageProducer = messasgingProvider.getProducer(config, executionContext)
+    private val messagingProvider = SpiLoader.get[MessagingProvider]
+    private val messageProducer = messagingProvider.getProducer(config, executionContext)
 
     private def sendActivationToInvoker(producer: MessageProducer, msg: ActivationMessage, invoker: InstanceId): Future[RecordMetadata] = {
         implicit val transid = msg.transid
@@ -197,7 +202,7 @@ class LoadBalancerService(
         }
 
         val maxPingsPerPoll = 128
-        val pingConsumer = messasgingProvider.getConsumer(config, s"health${instance.toInt}", "health", maxPeek = maxPingsPerPoll)
+        val pingConsumer = messagingProvider.getConsumer(config, s"health${instance.toInt}", "health", maxPeek = maxPingsPerPoll)
         val invokerFactory = (f: ActorRefFactory, invokerInstance: InstanceId) => f.actorOf(InvokerActor.props(invokerInstance, instance))
 
         actorSystem.actorOf(InvokerPool.props(
@@ -211,7 +216,7 @@ class LoadBalancerService(
      */
     val maxActiveAcksPerPoll = 128
     val activeAckPollDuration = 1.second
-    private val activeAckConsumer = messasgingProvider.getConsumer(config, "completions", s"completed${instance.toInt}", maxPeek = maxActiveAcksPerPoll)
+    private val activeAckConsumer = messagingProvider.getConsumer(config, "completions", s"completed${instance.toInt}", maxPeek = maxActiveAcksPerPoll)
     val activationFeed = actorSystem.actorOf(Props {
         new MessageFeed("activeack", logging,
             activeAckConsumer, maxActiveAcksPerPoll, activeAckPollDuration, processActiveAck)
@@ -259,7 +264,7 @@ class LoadBalancerService(
             val invokersToUse = if (action.exec.pull) blackboxInvokers(invokers) else managedInvokers(invokers)
             val invokersWithUsage = invokersToUse.view.map {
                 // Using a view defers the comparably expensive lookup to actual access of the element
-                case (instance, state) => (instance, state, loadBalancerData.activationCountByInvoker.get(instance).getOrElse(0))
+                case (instance, state) => (instance, state, loadBalancerData.activationCountOn(instance))
             }
 
             LoadBalancerService.schedule(invokersWithUsage, config.loadbalancerInvokerBusyThreshold, hash) match {

@@ -22,20 +22,20 @@ import scala.concurrent.Future
 import scala.util.Failure
 import scala.util.Success
 
-import spray.http.StatusCode
-import spray.http.StatusCodes.Conflict
-import spray.http.StatusCodes.InternalServerError
-import spray.http.StatusCodes.NotFound
-import spray.http.StatusCodes.OK
-import spray.httpx.SprayJsonSupport._
-import spray.httpx.marshalling.ToResponseMarshallable.isMarshallable
+import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport._
+import akka.http.scaladsl.model.StatusCode
+import akka.http.scaladsl.model.StatusCodes.Conflict
+import akka.http.scaladsl.model.StatusCodes.InternalServerError
+import akka.http.scaladsl.model.StatusCodes.NotFound
+import akka.http.scaladsl.model.StatusCodes.OK
+import akka.http.scaladsl.server.Directives
+import akka.http.scaladsl.server.RequestContext
+import akka.http.scaladsl.server.RouteResult
 import spray.json.DefaultJsonProtocol._
 import spray.json.JsBoolean
 import spray.json.JsObject
 import spray.json.JsValue
 import spray.json.RootJsonFormat
-import spray.routing.Directives
-import spray.routing.RequestContext
 import whisk.common.Logging
 import whisk.common.TransactionId
 import whisk.core.controller.PostProcess.PostProcessEntity
@@ -44,6 +44,7 @@ import whisk.core.database.ArtifactStoreException
 import whisk.core.database.DocumentConflictException
 import whisk.core.database.DocumentFactory
 import whisk.core.database.DocumentTypeMismatchException
+import whisk.core.database.CacheChangeNotification
 import whisk.core.database.NoDocumentException
 import whisk.core.entity.DocId
 import whisk.core.entity.WhiskDocument
@@ -105,7 +106,7 @@ protected[controller] object FilterEntityList {
  * on an operation and terminate the HTTP request.
  */
 package object PostProcess {
-    type PostProcessEntity[A] = A => RequestContext => Unit
+    type PostProcessEntity[A] = A => RequestContext => Future[RouteResult]
 }
 
 /** A trait for REST APIs that read entities from a datastore */
@@ -115,6 +116,9 @@ trait ReadOps extends Directives {
     protected implicit val executionContext: ExecutionContext
 
     protected implicit val logging: Logging
+
+    /** JSON response formatter. */
+    import RestApiCommons.jsonDefaultResponsePrinter
 
     /**
      * Get all entities of type A from datastore that match key. Terminates HTTP request.
@@ -230,6 +234,9 @@ trait WriteOps extends Directives {
 
     protected implicit val logging: Logging
 
+    /** JSON response formatter. */
+    import RestApiCommons.jsonDefaultResponsePrinter
+
     /**
      * A predicate future that completes with true iff the entity should be
      * stored in the datastore. Future should fail otherwise with RejectPut.
@@ -268,6 +275,7 @@ trait WriteOps extends Directives {
         postProcess: Option[PostProcessEntity[A]] = None)(
             implicit transid: TransactionId,
             format: RootJsonFormat[A],
+            notifier: Option[CacheChangeNotification],
             ma: Manifest[A]) = {
         // marker to return an existing doc with status OK rather than conflict if overwrite is false
         case class IdentityPut(self: A) extends Throwable
@@ -339,6 +347,7 @@ trait WriteOps extends Directives {
         postProcess: Option[PostProcessEntity[A]] = None)(
             implicit transid: TransactionId,
             format: RootJsonFormat[A],
+            notifier: Option[CacheChangeNotification],
             ma: Manifest[A]) = {
         onComplete(factory.get(datastore, docid) flatMap {
             entity =>
