@@ -28,7 +28,7 @@ import whisk.common.TransactionId
 import whisk.core.containerpool.docker.ContainerId
 import whisk.core.containerpool.docker.ContainerIp
 import whisk.core.containerpool.docker.ProcessRunner
-import whisk.core.invoker.ActionLogDriver
+import whisk.core.containerpool.docker.DockerActionLogDriver
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -144,7 +144,7 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
                 // TODO: Until we're able to distinguish stdout/stderr
                 // from kubectl, we assume stdout except for one sentinel
                 val stream =
-                    if (msg.trim == ActionLogDriver.LOG_ACTIVATION_SENTINEL) {
+                    if (msg.trim == DockerActionLogDriver.LOG_ACTIVATION_SENTINEL) {
                         if (!sentinelSeen) {
                             sentinelSeen = true
                             "stdout"

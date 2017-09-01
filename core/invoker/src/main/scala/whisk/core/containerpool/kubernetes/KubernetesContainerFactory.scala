@@ -32,8 +32,6 @@ import whisk.core.entity.ByteSize
 import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity.InstanceId
 import whisk.core.WhiskConfig
-import whisk.spi.Dependencies
-import whisk.spi.SpiFactory
 
 
 class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ec: ExecutionContext, logger: Logging) extends ContainerFactory {
@@ -62,11 +60,7 @@ class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ec
     }
 }
 
-class KubernetesContainerFactoryProvider extends ContainerFactoryProvider {
+object KubernetesContainerFactoryProvider extends ContainerFactoryProvider {
     override def getContainerFactory(instance: InstanceId, actorSystem: ActorSystem, logging: Logging, config: WhiskConfig): ContainerFactory =
         new KubernetesContainerFactory(s"invoker${instance.toInt}", config)(actorSystem.dispatcher, logging)
-}
-
-object KubernetesContainerFactoryProvider extends SpiFactory[ContainerFactoryProvider] {
-    override def apply(dependencies: Dependencies): ContainerFactoryProvider = new KubernetesContainerFactoryProvider()
 }

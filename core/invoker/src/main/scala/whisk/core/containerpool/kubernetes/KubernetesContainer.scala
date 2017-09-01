@@ -30,19 +30,18 @@ import spray.json.DefaultJsonProtocol._
 import whisk.common.Logging
 import whisk.common.LoggingMarkers
 import whisk.common.TransactionId
-import whisk.core.container
-import whisk.core.container.HttpUtils
-import whisk.core.container.Interval
-import whisk.core.container.RunResult
 import whisk.core.containerpool.Container
 import whisk.core.containerpool.InitializationError
+import whisk.core.containerpool.Interval
 import whisk.core.containerpool.WhiskContainerStartupError
 import whisk.core.containerpool.docker.ContainerId
 import whisk.core.containerpool.docker.ContainerIp
+import whisk.core.containerpool.docker.DockerActionLogDriver
+import whisk.core.containerpool.docker.HttpUtils
+import whisk.core.containerpool.docker.RunResult
 import whisk.core.entity.ActivationResponse
 import whisk.core.entity.ByteSize
 import whisk.core.entity.size._
-import whisk.core.invoker.ActionLogDriver
 import whisk.http.Messages
 
 object KubernetesContainer {
@@ -93,7 +92,7 @@ object KubernetesContainer {
   * @param ip the ip of the container
   */
 class KubernetesContainer(id: ContainerId, ip: ContainerIp) (
-    implicit kubernetes: KubernetesApi, ec: ExecutionContext, logger: Logging) extends Container with ActionLogDriver {
+    implicit kubernetes: KubernetesApi, ec: ExecutionContext, logger: Logging) extends Container with DockerActionLogDriver {
 
     /** The last read timestamp in the log file */
     private var lastTimestamp = ""
@@ -112,7 +111,7 @@ class KubernetesContainer(id: ContainerId, ip: ContainerIp) (
 
     def destroy()(implicit transid: TransactionId): Future[Unit] = kubernetes.rm(id)
 
-    def initialize(initializer: JsObject, timeout: FiniteDuration)(implicit transid: TransactionId): Future[container.Interval] = {
+    def initialize(initializer: JsObject, timeout: FiniteDuration)(implicit transid: TransactionId): Future[Interval] = {
         val start = transid.started(this, LoggingMarkers.INVOKER_ACTIVATION_INIT, s"sending initialization to $id $ip")
 
         val body = JsObject("value" -> initializer)
@@ -132,7 +131,7 @@ class KubernetesContainer(id: ContainerId, ip: ContainerIp) (
         }
     }
 
-    def run(parameters: JsObject, environment: JsObject, timeout: FiniteDuration)(implicit transid: TransactionId): Future[(container.Interval, ActivationResponse)] = {
+    def run(parameters: JsObject, environment: JsObject, timeout: FiniteDuration)(implicit transid: TransactionId): Future[(Interval, ActivationResponse)] = {
         val actionName = environment.fields.get("action_name").map(_.convertTo[String]).getOrElse("")
         val start = transid.started(this, LoggingMarkers.INVOKER_ACTIVATION_RUN, s"sending arguments to $actionName at $id $ip")
 

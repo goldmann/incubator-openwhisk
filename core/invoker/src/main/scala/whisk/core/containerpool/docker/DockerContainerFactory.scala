@@ -26,7 +26,6 @@ import scala.concurrent.duration._
 
 import whisk.common.Logging
 import whisk.common.TransactionId
-import whisk.core.container.{ ContainerPool => OldContainerPool }
 import whisk.core.containerpool.Container
 import whisk.core.containerpool.ContainerFactory
 import whisk.core.containerpool.ContainerFactoryProvider
@@ -34,8 +33,7 @@ import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity.ByteSize
 import whisk.core.entity.InstanceId
 import whisk.core.WhiskConfig
-import whisk.spi.Dependencies
-import whisk.spi.SpiFactory
+
 
 class DockerContainerFactory(instance: InstanceId, config: WhiskConfig)(implicit ec: ExecutionContext, logger: Logging) extends ContainerFactory {
 
@@ -70,7 +68,7 @@ class DockerContainerFactory(instance: InstanceId, config: WhiskConfig)(implicit
             image = image,
             userProvidedImage = userProvidedImage,
             memory = memory,
-            cpuShares = OldContainerPool.cpuShare(config),
+            cpuShares = config.invokerCoreShare.toInt,
             environment = Map("__OW_API_HOST" -> config.wskApiHost),
             network = config.invokerContainerNetwork,
             dnsServers = config.invokerContainerDns,
@@ -79,11 +77,7 @@ class DockerContainerFactory(instance: InstanceId, config: WhiskConfig)(implicit
     }
 }
 
-class DockerContainerFactoryProvider extends ContainerFactoryProvider {
+object DockerContainerFactoryProvider extends ContainerFactoryProvider {
     override def getContainerFactory(instance:InstanceId, actorSystem: ActorSystem, logging: Logging, config: WhiskConfig): ContainerFactory =
         new DockerContainerFactory(instance, config)(actorSystem.dispatcher, logging)
-}
-
-object DockerContainerFactoryProvider extends SpiFactory[ContainerFactoryProvider] {
-    override def apply(dependencies: Dependencies): ContainerFactoryProvider = new DockerContainerFactoryProvider()
 }
