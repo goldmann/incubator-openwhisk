@@ -76,10 +76,7 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
     private val containerFactory = SpiLoader.get[ContainerFactoryProvider].getContainerFactory(instance, actorSystem, logging, config)
     logging.info(this, s"using $containerFactory")
     containerFactory.cleanup()
-    sys.addShutdownHook {
-        logging.info(this, "Cleaning up function runtimes")
-        containerFactory.cleanup()
-    }
+    sys.addShutdownHook(containerFactory.cleanup())
 
     /** Sends an active-ack. */
     val ack = (tid: TransactionId, activationResult: WhiskActivation, controllerInstance: InstanceId) => {

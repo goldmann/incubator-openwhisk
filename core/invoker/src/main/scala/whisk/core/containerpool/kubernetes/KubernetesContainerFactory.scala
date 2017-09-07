@@ -39,6 +39,7 @@ class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ec
     implicit val kubernetes = new KubernetesClient()(ec)
 
     def cleanup() = {
+        logger.info(this, "Cleaning up function runtimes")
         val cleaning = kubernetes.rm("invoker", label)(TransactionId.invokerNanny)
         Await.ready(cleaning, 30.seconds)
     }
