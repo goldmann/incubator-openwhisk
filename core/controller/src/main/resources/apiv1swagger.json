@@ -413,7 +413,6 @@
                         }
                     },
                     "202": {
-                        "description": "Activation request accepted",
                         "$ref": "#/responses/AcceptedActivation"
                     },
                     "401": {
