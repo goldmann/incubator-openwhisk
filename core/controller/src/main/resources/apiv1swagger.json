@@ -8,6 +8,16 @@
     "produces": [
         "application/json"
     ],
+    "securityDefinitions": {
+        "basicAuth": {
+            "type": "basic"
+        }
+    },
+    "security": [
+        {
+            "basicAuth": []
+        }
+    ],
     "basePath": "/api/v1",
     "tags": [
         {
