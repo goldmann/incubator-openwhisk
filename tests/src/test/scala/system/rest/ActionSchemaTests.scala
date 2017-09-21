@@ -69,7 +69,8 @@ class ActionSchemaTests extends FlatSpec with Matchers with RestUtil with JsonSc
         // check that each collection result obeys the schema
         actions.foreach { a =>
           val aString = a.compactPrint
-          assert(check(aString, schema))
+          val report = validate(aString, schema)
+          assert(report.isSuccess, report)
         }
 
       case Success(_) =>
@@ -108,7 +109,8 @@ class ActionSchemaTests extends FlatSpec with Matchers with RestUtil with JsonSc
         case Success(action: JsObject) =>
           // check that the action obeys the Action model schema
           val aString = action.compactPrint
-          assert(check(aString, schema))
+          val report = validate(aString, schema)
+          assert(report.isSuccess, report)
 
         case Success(_) =>
           assert(false, "response is not a json object")

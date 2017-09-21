@@ -19,6 +19,7 @@ package system.rest
 
 import com.github.fge.jsonschema.main.JsonSchemaFactory
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.github.fge.jsonschema.core.report.ProcessingReport
 
 /**
  * Utilities for dealing with JSON schema
@@ -32,11 +33,20 @@ trait JsonSchema {
    * @return true if the document is valid, false otherwise
    */
   def check(doc: String, schema: String): Boolean = {
+    validate(doc, schema).isSuccess
+  }
+
+  /**
+   * Validate a JSON document (represented as a String) against a JSON schema (also a String).
+   *
+   * @return ProcessingReport the validation report
+   */
+  def validate(doc: String, schema: String): ProcessingReport = {
     val mapper = new ObjectMapper()
     val docNode = mapper.readTree(doc)
     val schemaNode = mapper.readTree(schema)
 
     val validator = JsonSchemaFactory.byDefault().getValidator
-    validator.validate(schemaNode, docNode).isSuccess
+    validator.validate(schemaNode, docNode)
   }
 }
