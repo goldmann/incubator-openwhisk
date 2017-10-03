@@ -18,66 +18,84 @@
 package whisk.core.containerpool.docker
 
 import akka.actor.ActorSystem
-
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
-import scala.concurrent.duration._
-
 import whisk.common.Logging
 import whisk.common.TransactionId
+import whisk.core.WhiskConfig
 import whisk.core.containerpool.Container
 import whisk.core.containerpool.ContainerFactory
 import whisk.core.containerpool.ContainerFactoryProvider
-import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity.ByteSize
+import whisk.core.entity.ExecManifest
 import whisk.core.entity.InstanceId
-import whisk.core.WhiskConfig
+import scala.concurrent.duration._
 
+class DockerContainerFactory(config: WhiskConfig, instance: InstanceId, parameters: Map[String, Set[String]])(
+  implicit actorSystem: ActorSystem,
+  ec: ExecutionContext,
+  logging: Logging)
+    extends ContainerFactory {
 
-class DockerContainerFactory(instance: InstanceId, config: WhiskConfig)(implicit ec: ExecutionContext, logger: Logging) extends ContainerFactory {
+  /** Initialize container clients */
+  implicit val docker = new DockerClientWithFileAccess()(ec)
+  implicit val runc = new RuncClient(ec)
 
-    implicit val docker = new DockerClientWithFileAccess()(ec)
-    implicit val runc = new RuncClient(ec)
+  /** Create a container using docker cli */
+  override def createContainer(tid: TransactionId,
+                               name: String,
+                               actionImage: ExecManifest.ImageName,
+                               userProvidedImage: Boolean,
+                               memory: ByteSize)(implicit config: WhiskConfig, logging: Logging): Future[Container] = {
+    val image = if (userProvidedImage) {
+      actionImage.publicImageName
+    } else {
+      actionImage.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
+    }
 
-    /** Cleans up all running wsk_ containers */
-    def cleanup() = {
-        val cleaning = docker.ps(Seq("name" -> s"wsk${instance.toInt}_"))(TransactionId.invokerNanny).flatMap { containers =>
-            val removals = containers.map { id =>
-                runc.resume(id)(TransactionId.invokerNanny).recoverWith {
-                    // Ignore resume failures and try to remove anyway
-                    case _ => Future.successful(())
-                }.flatMap {
-                    _ => docker.rm(id)(TransactionId.invokerNanny)
-                }
+    DockerContainer.create(
+      tid,
+      image = image,
+      userProvidedImage = userProvidedImage,
+      memory = memory,
+      cpuShares = config.invokerCoreShare.toInt,
+      environment = Map("__OW_API_HOST" -> config.wskApiHost),
+      network = config.invokerContainerNetwork,
+      dnsServers = config.invokerContainerDns,
+      name = Some(name),
+      parameters)
+  }
+
+  /** Perform cleanup on init */
+  override def init(): Unit = cleanup()
+
+  /** Cleans up all running wsk_ containers */
+  override def cleanup(): Unit = {
+    val cleaning = docker.ps(Seq("name" -> s"wsk${instance.toInt}_"))(TransactionId.invokerNanny).flatMap {
+      containers =>
+        val removals = containers.map { id =>
+          runc
+            .resume(id)(TransactionId.invokerNanny)
+            .recoverWith {
+              // Ignore resume failures and try to remove anyway
+              case _ => Future.successful(())
             }
-            Future.sequence(removals)
+            .flatMap { _ =>
+              docker.rm(id)(TransactionId.invokerNanny)
+            }
         }
-        Await.ready(cleaning, 30.seconds)
+        Future.sequence(removals)
     }
-
-    def create(tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize): Future[Container] = {
-        val image = if (userProvidedImage) {
-            actionImage.publicImageName
-        } else {
-            actionImage.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
-        }
-
-        DockerContainer.create(
-            tid,
-            image = image,
-            userProvidedImage = userProvidedImage,
-            memory = memory,
-            cpuShares = config.invokerCoreShare.toInt,
-            environment = Map("__OW_API_HOST" -> config.wskApiHost),
-            network = config.invokerContainerNetwork,
-            dnsServers = config.invokerContainerDns,
-            name = Some(name))
-
-    }
+    Await.ready(cleaning, 30.seconds)
+  }
 }
 
 object DockerContainerFactoryProvider extends ContainerFactoryProvider {
-    override def getContainerFactory(instance:InstanceId, actorSystem: ActorSystem, logging: Logging, config: WhiskConfig): ContainerFactory =
-        new DockerContainerFactory(instance, config)(actorSystem.dispatcher, logging)
+  override def getContainerFactory(actorSystem: ActorSystem,
+                                   logging: Logging,
+                                   config: WhiskConfig,
+                                   instanceId: InstanceId,
+                                   parameters: Map[String, Set[String]]): ContainerFactory =
+    new DockerContainerFactory(config, instanceId, parameters)(actorSystem, actorSystem.dispatcher, logging)
 }

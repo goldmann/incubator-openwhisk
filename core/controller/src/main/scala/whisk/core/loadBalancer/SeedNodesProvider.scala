@@ -15,24 +15,27 @@
  * limitations under the License.
  */
 
-package whisk.core.containerpool
+package whisk.core.loadBalancer
 
-import akka.actor.ActorSystem
-import scala.concurrent.Future
+import akka.actor.Address
 
-import whisk.common.TransactionId
-import whisk.common.Logging
-import whisk.core.WhiskConfig
-import whisk.core.entity.ByteSize
-import whisk.core.entity.ExecManifest.ImageName
-import whisk.core.entity.InstanceId
-import whisk.spi.Spi
+import scala.collection.immutable.Seq
 
-trait ContainerFactory {
-    def create(tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize): Future[Container]
-    def cleanup(): Unit
+trait SeedNodesProvider {
+  def getSeedNodes(): Seq[Address]
 }
 
-trait ContainerFactoryProvider extends Spi {
-    def getContainerFactory(instance:InstanceId, actorSystem:ActorSystem, logging:Logging, config:WhiskConfig): ContainerFactory
+class StaticSeedNodesProvider(seedNodes: String, actorSystemName: String) extends SeedNodesProvider {
+  def getSeedNodes(): Seq[Address] = {
+    seedNodes
+      .split(' ')
+      .flatMap { rawNodes =>
+        val ipWithPort = rawNodes.split(":")
+        ipWithPort match {
+          case Array(host, port) => Seq(Address("akka.tcp", actorSystemName, host, port.toInt))
+          case _                 => Seq.empty[Address]
+        }
+      }
+      .toIndexedSeq
+  }
 }

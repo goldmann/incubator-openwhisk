@@ -25,8 +25,8 @@ import akka.event.Logging.ErrorLevel
 import whisk.common.Logging
 import whisk.common.LoggingMarkers
 import whisk.common.TransactionId
-import whisk.core.containerpool.docker.ContainerId
-import whisk.core.containerpool.docker.ContainerIp
+import whisk.core.containerpool.ContainerId
+import whisk.core.containerpool.ContainerAddress
 import whisk.core.containerpool.docker.ProcessRunner
 import whisk.core.containerpool.docker.DockerActionLogDriver
 
@@ -89,11 +89,11 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
         runCmd(runArgs: _*).map {_ => name}.map(ContainerId.apply)
     }
 
-    def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerIp] = {
+    def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerAddress] = {
         Future {
             blocking {
                 val pod = kubeRestClient.pods().withName(id.asString).waitUntilReady(30, SECONDS)
-                ContainerIp(pod.getStatus().getPodIP())
+                ContainerAddress(pod.getStatus().getPodIP())
             }
         }.recoverWith {
             case e =>
@@ -172,7 +172,7 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
 trait KubernetesApi {
     def run(image: String, name: String, environment: Map[String, String] = Map(), labels: Map[String, String] = Map())(implicit transid: TransactionId): Future[ContainerId]
 
-    def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerIp]
+    def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerAddress]
 
     def rm(id: ContainerId)(implicit transid: TransactionId): Future[Unit]
 
