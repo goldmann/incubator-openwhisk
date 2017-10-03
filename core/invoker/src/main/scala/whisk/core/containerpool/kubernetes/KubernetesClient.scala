@@ -46,137 +46,164 @@ import io.fabric8.kubernetes.client.utils.URLUtils
 import okhttp3.Request
 
 /**
-  * Serves as interface to the kubectl CLI tool.
-  *
-  * Be cautious with the ExecutionContext passed to this, as the
-  * calls to the CLI are blocking.
-  *
-  * You only need one instance (and you shouldn't get more).
-  */
+ * Serves as interface to the kubectl CLI tool.
+ *
+ * Be cautious with the ExecutionContext passed to this, as the
+ * calls to the CLI are blocking.
+ *
+ * You only need one instance (and you shouldn't get more).
+ */
 class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Logging)
-        extends KubernetesApi with ProcessRunner {
-    implicit private val ec = executionContext
-    implicit private val kubeRestClient = new DefaultKubernetesClient
+    extends KubernetesApi
+    with ProcessRunner {
+  implicit private val ec = executionContext
+  implicit private val kubeRestClient = new DefaultKubernetesClient
 
-    // Determines how to run kubectl. Failure to find a kubectl binary implies
-    // a failure to initialize this instance of KubernetesClient.
-    protected val kubectlCmd: Seq[String] = {
-        val alternatives = List("/usr/bin/kubectl", "/usr/local/bin/kubectl")
+  // Determines how to run kubectl. Failure to find a kubectl binary implies
+  // a failure to initialize this instance of KubernetesClient.
+  protected val kubectlCmd: Seq[String] = {
+    val alternatives = List("/usr/bin/kubectl", "/usr/local/bin/kubectl")
 
-        val kubectlBin = Try {
-            alternatives.find(a => Files.isExecutable(Paths.get(a))).get
-        } getOrElse {
-            throw new FileNotFoundException(s"Couldn't locate kubectl binary (tried: ${alternatives.mkString(", ")}).")
-        }
-
-        Seq(kubectlBin)
+    val kubectlBin = Try {
+      alternatives.find(a => Files.isExecutable(Paths.get(a))).get
+    } getOrElse {
+      throw new FileNotFoundException(s"Couldn't locate kubectl binary (tried: ${alternatives.mkString(", ")}).")
     }
 
-    def run(image: String, name: String, environment: Map[String, String] = Map(), labels: Map[String, String] = Map())(implicit transid: TransactionId): Future[ContainerId] = {
-        val environmentArgs = environment.flatMap {
-            case (key, value) => Seq("--env", s"$key=$value")
-        }.toSeq
+    Seq(kubectlBin)
+  }
 
-        val labelArgs = labels.map {
-            case (key, value) => s"$key=$value"
-        } match {
-            case Seq() => Seq()
-            case pairs => Seq("-l") ++ pairs
-        }
+  def run(image: String, name: String, environment: Map[String, String] = Map(), labels: Map[String, String] = Map())(
+    implicit transid: TransactionId): Future[ContainerId] = {
+    val environmentArgs = environment.flatMap {
+      case (key, value) => Seq("--env", s"$key=$value")
+    }.toSeq
 
-        val runArgs = Seq("run", name, "--image", image, "--generator", "run-pod/v1", "--restart", "Always", "--limits", "memory=256Mi") ++ environmentArgs ++ labelArgs
-
-        runCmd(runArgs: _*).map {_ => name}.map(ContainerId.apply)
+    val labelArgs = labels.map {
+      case (key, value) => s"$key=$value"
+    } match {
+      case Seq() => Seq()
+      case pairs => Seq("-l") ++ pairs
     }
 
-    def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerAddress] = {
-        Future {
-            blocking {
-                val pod = kubeRestClient.pods().withName(id.asString).waitUntilReady(30, SECONDS)
-                ContainerAddress(pod.getStatus().getPodIP())
+    val runArgs = Seq(
+      "run",
+      name,
+      "--image",
+      image,
+      "--generator",
+      "run-pod/v1",
+      "--restart",
+      "Always",
+      "--limits",
+      "memory=256Mi") ++ environmentArgs ++ labelArgs
+
+    runCmd(runArgs: _*)
+      .map { _ =>
+        name
+      }
+      .map(ContainerId.apply)
+  }
+
+  def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerAddress] = {
+    Future {
+      blocking {
+        val pod = kubeRestClient.pods().withName(id.asString).waitUntilReady(30, SECONDS)
+        ContainerAddress(pod.getStatus().getPodIP())
+      }
+    }.recoverWith {
+      case e =>
+        log.error(this, s"Failed to get IP of Pod '${id.asString}' within timeout: ${e.getClass} - ${e.getMessage}")
+        Future.failed(new Exception(s"Failed to get IP of Pod '${id.asString}'"))
+    }
+  }
+
+  def rm(id: ContainerId)(implicit transid: TransactionId): Future[Unit] =
+    runCmd("delete", "--now", "pod", id.asString).map(_ => ())
+
+  def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit] =
+    runCmd("delete", "--now", "pod", "-l", s"$key=$value").map(_ => ())
+
+  def logs(id: ContainerId, sinceTime: String)(implicit transid: TransactionId): Future[String] = {
+    Future {
+      blocking {
+        val sinceTimePart = if (!sinceTime.isEmpty) {
+          s"&sinceTime=${sinceTime}"
+        } else ""
+        val url = new URL(
+          URLUtils.join(
+            kubeRestClient.getMasterUrl.toString,
+            "api",
+            "v1",
+            "namespaces",
+            kubeRestClient.getNamespace,
+            "pods",
+            id.asString,
+            "log?timestamps=true" ++ sinceTimePart))
+        val request = new Request.Builder().get().url(url).build
+        val response = kubeRestClient.getHttpClient.newCall(request).execute
+        if (!response.isSuccessful) {
+          Future.failed(
+            new Exception(s"Kubernetes API returned HTTP status ${response.code} when trying to retrieve pod logs"))
+        }
+        response.body.string
+      }
+    }.map { output =>
+      val original = output.lines.toSeq
+      val relevant = original.dropWhile(s => !s.startsWith(sinceTime))
+      val result =
+        if (!relevant.isEmpty && original.size > relevant.size) {
+          // drop matching timestamp from previous activation
+          relevant.drop(1)
+        } else {
+          original
+        }
+      // map the logs to the docker json file format expected by
+      // ActionLogDriver.processJsonDriverLogContents
+      var sentinelSeen = false
+      result
+        .map { line =>
+          val pos = line.indexOf(" ")
+          val ts = line.substring(0, pos)
+          val msg = line.substring(pos + 1)
+          // TODO: Until we're able to distinguish stdout/stderr
+          // from kubectl, we assume stdout except for one sentinel
+          val stream =
+            if (msg.trim == DockerActionLogDriver.LOG_ACTIVATION_SENTINEL) {
+              if (!sentinelSeen) {
+                sentinelSeen = true
+                "stdout"
+              } else {
+                "stderr"
+              }
+            } else {
+              "stdout"
             }
-        }.recoverWith {
-            case e =>
-                log.error(this, s"Failed to get IP of Pod '${id.asString}' within timeout: ${e.getClass} - ${e.getMessage}")
-                Future.failed(new Exception(s"Failed to get IP of Pod '${id.asString}'"))
+          JsObject("log" -> msg.toJson, "stream" -> stream.toJson, "time" -> ts.toJson)
         }
+        .mkString("\n")
     }
+  }
 
-    def rm(id: ContainerId)(implicit transid: TransactionId): Future[Unit] =
-        runCmd("delete", "--now", "pod", id.asString).map(_ => ())
-
-    def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit] =
-        runCmd("delete", "--now", "pod", "-l", s"$key=$value").map(_ => ())
-
-    def logs(id: ContainerId, sinceTime: String)(implicit transid: TransactionId): Future[String] = {
-        Future {
-            blocking {
-                val sinceTimePart = if (!sinceTime.isEmpty) {
-                    s"&sinceTime=${sinceTime}"
-                } else ""
-                val url = new URL(URLUtils.join(kubeRestClient.getMasterUrl.toString,
-                    "api", "v1", "namespaces", kubeRestClient.getNamespace,
-                    "pods", id.asString, "log?timestamps=true" ++ sinceTimePart))
-                val request = new Request.Builder().get().url(url).build
-                val response = kubeRestClient.getHttpClient.newCall(request).execute
-                if (!response.isSuccessful) {
-                    Future.failed(new Exception(s"Kubernetes API returned HTTP status ${response.code} when trying to retrieve pod logs"))
-                }
-                response.body.string
-            }
-        }.map { output =>
-            val original = output.lines.toSeq
-            val relevant = original.dropWhile(s => !s.startsWith(sinceTime))
-            val result =
-                if (!relevant.isEmpty && original.size > relevant.size) {
-                    // drop matching timestamp from previous activation
-                    relevant.drop(1)
-                } else {
-                    original
-                }
-            // map the logs to the docker json file format expected by
-            // ActionLogDriver.processJsonDriverLogContents
-            var sentinelSeen = false
-            result.map { line =>
-                val pos = line.indexOf(" ")
-                val ts = line.substring(0, pos)
-                val msg = line.substring(pos+1)
-                // TODO: Until we're able to distinguish stdout/stderr
-                // from kubectl, we assume stdout except for one sentinel
-                val stream =
-                    if (msg.trim == DockerActionLogDriver.LOG_ACTIVATION_SENTINEL) {
-                        if (!sentinelSeen) {
-                            sentinelSeen = true
-                            "stdout"
-                        } else {
-                            "stderr"
-                        }
-                    } else {
-                        "stdout"
-                    }
-                JsObject("log" -> msg.toJson, "stream" -> stream.toJson, "time" -> ts.toJson)
-            }.mkString("\n")
-        }
+  private def runCmd(args: String*)(implicit transid: TransactionId): Future[String] = {
+    val cmd = kubectlCmd ++ args
+    val start = transid.started(this, LoggingMarkers.INVOKER_KUBECTL_CMD(args.head), s"running ${cmd.mkString(" ")}")
+    executeProcess(cmd: _*).andThen {
+      case Success(_) => transid.finished(this, start)
+      case Failure(t) => transid.failed(this, start, t.getMessage, ErrorLevel)
     }
-
-    private def runCmd(args: String*)(implicit transid: TransactionId): Future[String] = {
-        val cmd = kubectlCmd ++ args
-        val start = transid.started(this, LoggingMarkers.INVOKER_KUBECTL_CMD(args.head), s"running ${cmd.mkString(" ")}")
-        executeProcess(cmd: _*).andThen {
-            case Success(_) => transid.finished(this, start)
-            case Failure(t) => transid.failed(this, start, t.getMessage, ErrorLevel)
-        }
-    }
+  }
 }
 
 trait KubernetesApi {
-    def run(image: String, name: String, environment: Map[String, String] = Map(), labels: Map[String, String] = Map())(implicit transid: TransactionId): Future[ContainerId]
+  def run(image: String, name: String, environment: Map[String, String] = Map(), labels: Map[String, String] = Map())(
+    implicit transid: TransactionId): Future[ContainerId]
 
-    def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerAddress]
+  def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerAddress]
 
-    def rm(id: ContainerId)(implicit transid: TransactionId): Future[Unit]
+  def rm(id: ContainerId)(implicit transid: TransactionId): Future[Unit]
 
-    def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit]
+  def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit]
 
-    def logs(containerId: ContainerId, sinceTime: String)(implicit transid: TransactionId): Future[String]
+  def logs(containerId: ContainerId, sinceTime: String)(implicit transid: TransactionId): Future[String]
 }

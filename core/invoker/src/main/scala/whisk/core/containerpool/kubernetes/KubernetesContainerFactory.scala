@@ -33,36 +33,39 @@ import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity.InstanceId
 import whisk.core.WhiskConfig
 
+class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ec: ExecutionContext, logging: Logging)
+    extends ContainerFactory {
 
-class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ec: ExecutionContext, logging: Logging) extends ContainerFactory {
+  implicit val kubernetes = new KubernetesClient()(ec)
 
-    implicit val kubernetes = new KubernetesClient()(ec)
+  /** Perform cleanup on init */
+  override def init(): Unit = cleanup()
 
-    /** Perform cleanup on init */
-    override def init(): Unit = cleanup()
+  override def cleanup() = {
+    logging.info(this, "Cleaning up function runtimes")
+    val cleaning = kubernetes.rm("invoker", label)(TransactionId.invokerNanny)
+    Await.ready(cleaning, 30.seconds)
+  }
 
-    override def cleanup() = {
-        logging.info(this, "Cleaning up function runtimes")
-        val cleaning = kubernetes.rm("invoker", label)(TransactionId.invokerNanny)
-        Await.ready(cleaning, 30.seconds)
+  override def createContainer(tid: TransactionId,
+                               name: String,
+                               actionImage: ImageName,
+                               userProvidedImage: Boolean,
+                               memory: ByteSize)(implicit config: WhiskConfig, logging: Logging): Future[Container] = {
+    val image = if (userProvidedImage) {
+      actionImage.publicImageName
+    } else {
+      actionImage.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
     }
 
-    override def createContainer(tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize)(
-      implicit config: WhiskConfig, logging: Logging): Future[Container] = {
-        val image = if (userProvidedImage) {
-            actionImage.publicImageName
-        } else {
-            actionImage.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
-        }
-
-        KubernetesContainer.create(
-            tid,
-            image = image,
-            userProvidedImage = userProvidedImage,
-            environment = Map("__OW_API_HOST" -> config.wskApiHost),
-            labels = Map("invoker" -> label),
-            name = Some(name))
-    }
+    KubernetesContainer.create(
+      tid,
+      image = image,
+      userProvidedImage = userProvidedImage,
+      environment = Map("__OW_API_HOST" -> config.wskApiHost),
+      labels = Map("invoker" -> label),
+      name = Some(name))
+  }
 }
 
 object KubernetesContainerFactoryProvider extends ContainerFactoryProvider {
