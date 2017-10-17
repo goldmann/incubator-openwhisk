@@ -29,7 +29,6 @@ import whisk.core.containerpool.Container
 import whisk.core.containerpool.WhiskContainerStartupError
 import whisk.core.containerpool.ContainerId
 import whisk.core.containerpool.ContainerAddress
-import whisk.core.containerpool.HttpUtils
 import whisk.core.containerpool.docker.DockerActionLogDriver
 import whisk.core.entity.ByteSize
 
@@ -94,9 +93,6 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
 
   protected val logsRetryCount = 15
   protected val logsRetryWait = 100.millis
-
-  /** HTTP connection to the container, will be lazily established by callContainer */
-  private var httpConnection: Option[HttpUtils] = None
 
   // no-op under Kubernetes
   def suspend()(implicit transid: TransactionId): Future[Unit] = Future.successful({})
