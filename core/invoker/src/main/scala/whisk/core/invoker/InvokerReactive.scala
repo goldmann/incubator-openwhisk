@@ -22,8 +22,11 @@ import java.time.Instant
 
 import scala.concurrent.Future
 import scala.concurrent.duration._
-import scala.util.{Failure, Success}
+import scala.util.Failure
+import scala.util.Success
+
 import org.apache.kafka.common.errors.RecordTooLargeException
+
 import akka.actor.ActorRefFactory
 import akka.actor.ActorSystem
 import akka.actor.Props
@@ -45,7 +48,8 @@ import whisk.core.containerpool.ContainerPool
 import whisk.core.containerpool.ContainerProxy
 import whisk.core.containerpool.PrewarmingConfig
 import whisk.core.containerpool.Run
-import whisk.core.database.{Batcher, DocumentConflictException, NoDocumentException}
+import whisk.core.containerpool.logging.LogStoreProvider
+import whisk.core.database.NoDocumentException
 import whisk.core.entity._
 import whisk.core.entity.size._
 import whisk.http.Messages
@@ -55,8 +59,34 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
   implicit actorSystem: ActorSystem,
   logging: Logging) {
 
+  implicit val materializer: ActorMaterializer = ActorMaterializer()
   implicit val ec = actorSystem.dispatcher
   implicit val cfg = config
+
+  private val logsProvider = SpiLoader.get[LogStoreProvider].logStore(actorSystem)
+
+  /**
+   * Factory used by the ContainerProxy to physically create a new container.
+   *
+   * Create and initialize the container factory before kicking off any other
+   * task or actor because further operation does not make sense if something
+   * goes wrong here. Initialization will throw an exception upon failure.
+   */
+  val containerFactory =
+    SpiLoader
+      .get[ContainerFactoryProvider]
+      .getContainerFactory(
+        actorSystem,
+        logging,
+        config,
+        instance,
+        Map(
+          "--cap-drop" -> Set("NET_RAW", "NET_ADMIN"),
+          "--ulimit" -> Set("nofile=1024:1024"),
+          "--pids-limit" -> Set("1024"),
+          "--dns" -> config.invokerContainerDns.toSet) ++ logsProvider.containerParameters)
+  containerFactory.init()
+  sys.addShutdownHook(containerFactory.cleanup())
 
   /** Initialize needed databases */
   private val entityStore = WhiskEntityStore.datastore(config)
@@ -76,23 +106,6 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
   val activationFeed = actorSystem.actorOf(Props {
     new MessageFeed("activation", logging, consumer, maximumContainers, 500.milliseconds, processActivationMessage)
   })
-
-  /** Factory used by the ContainerProxy to physically create a new container. */
-  val containerFactory =
-    SpiLoader
-      .get[ContainerFactoryProvider]
-      .getContainerFactory(
-        actorSystem,
-        logging,
-        config,
-        instance,
-        Map(
-          "--cap-drop" -> Set("NET_RAW", "NET_ADMIN"),
-          "--ulimit" -> Set("nofile=1024:1024"),
-          "--pids-limit" -> Set("1024"),
-          "--dns" -> config.invokerContainerDns.toSet))
-  containerFactory.init()
-  sys.addShutdownHook(containerFactory.cleanup())
 
   /** Sends an active-ack. */
   val ack = (tid: TransactionId,
@@ -118,29 +131,19 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
     }
   }
 
-  implicit val materializer: ActorMaterializer = ActorMaterializer()
-  // In worst case we need "maximumContainers" connections to load actions from the database. The remaining
-  // connections can safely be used for writing activations.
-  val maxOpenDbRequests = actorSystem.settings.config.getInt("akka.http.host-connection-pool.max-open-requests")
-  val maxOpenActivationRequests = (maxOpenDbRequests - maximumContainers) max (maxOpenDbRequests / 2)
-  val batcher: Batcher[WhiskActivation, Either[DocumentConflictException, DocInfo]] =
-    new Batcher(500, maxOpenActivationRequests)(WhiskActivation.put(activationStore, _)(TransactionId.invoker))
-
   /** Stores an activation in the database. */
   val store = (tid: TransactionId, activation: WhiskActivation) => {
     implicit val transid = tid
     logging.info(this, "recording the activation result to the data store")
-
-    batcher.put(activation).andThen {
-      case Success(Right(_)) => logging.info(this, s"recorded activation")
-      case Success(Left(t))  => logging.error(this, s"failed to record activation, $t")
-      case Failure(t)        => logging.error(this, s"failed to record activation, $t")
+    WhiskActivation.put(activationStore, activation)(tid, notifier = None).andThen {
+      case Success(id) => logging.info(this, s"recorded activation")
+      case Failure(t)  => logging.error(this, s"failed to record activation")
     }
   }
 
   /** Creates a ContainerProxy Actor when being called. */
   val childFactory = (f: ActorRefFactory) =>
-    f.actorOf(ContainerProxy.props(containerFactory.createContainer _, ack, store, instance))
+    f.actorOf(ContainerProxy.props(containerFactory.createContainer, ack, store, logsProvider.collectLogs, instance))
 
   val prewarmKind = "nodejs:6"
   val prewarmExec = ExecManifest.runtimesManifest

@@ -19,11 +19,19 @@ package whisk.core.invoker
 
 import scala.concurrent.Await
 import scala.concurrent.duration._
+import scala.concurrent.Future
 import scala.util.Failure
+import scala.util.Try
 
-import com.redis.RedisClient
+import kamon.Kamon
 
+import org.apache.curator.retry.RetryUntilElapsed
+import org.apache.curator.framework.CuratorFrameworkFactory
+import org.apache.curator.framework.recipes.shared.SharedCount
+
+import akka.Done
 import akka.actor.ActorSystem
+import akka.actor.CoordinatedShutdown
 import akka.stream.ActorMaterializer
 import whisk.common.AkkaLogging
 import whisk.common.Scheduler
@@ -38,6 +46,9 @@ import whisk.core.entity.WhiskEntityStore
 import whisk.http.BasicHttpService
 import whisk.spi.SpiLoader
 import whisk.utils.ExecutionContextFactory
+import whisk.common.TransactionId
+
+case class CmdLineArgs(name: Option[String] = None, id: Option[Int] = None)
 
 object Invoker {
 
@@ -50,7 +61,7 @@ object Invoker {
       WhiskEntityStore.requiredProperties ++
       WhiskActivationStore.requiredProperties ++
       kafkaHost ++
-      redisHost ++
+      Map(zookeeperHostName -> "", zookeeperHostPort -> "") ++
       wskApiHost ++ Map(
       dockerImageTag -> "latest",
       invokerNumCore -> "4",
@@ -59,72 +70,124 @@ object Invoker {
       invokerContainerDns -> "",
       invokerContainerNetwork -> null,
       invokerUseRunc -> "true") ++
-      Map(invokerName -> null)
+      Map(invokerName -> "")
 
   def main(args: Array[String]): Unit = {
+    Kamon.start()
+
     implicit val ec = ExecutionContextFactory.makeCachedThreadPoolExecutionContext()
     implicit val actorSystem: ActorSystem =
       ActorSystem(name = "invoker-actor-system", defaultExecutionContext = Some(ec))
     implicit val logger = new AkkaLogging(akka.event.Logging.getLogger(actorSystem, this))
 
+    // Prepare Kamon shutdown
+    CoordinatedShutdown(actorSystem).addTask(CoordinatedShutdown.PhaseActorSystemTerminate, "shutdownKamon") { () =>
+      logger.info(this, s"Shutting down Kamon with coordinated shutdown")
+      Kamon.shutdown()
+      Future.successful(Done)
+    }
+
     // load values for the required properties from the environment
     implicit val config = new WhiskConfig(requiredProperties)
 
-    def abort() = {
-      logger.error(this, "Bad configuration, cannot start.")
+    def abort(message: String) = {
+      logger.error(this, message)(TransactionId.invoker)
       actorSystem.terminate()
       Await.result(actorSystem.whenTerminated, 30.seconds)
       sys.exit(1)
     }
 
     if (!config.isValid) {
-      abort()
+      abort("Bad configuration, cannot start.")
     }
 
     val execManifest = ExecManifest.initialize(config)
     if (execManifest.isFailure) {
       logger.error(this, s"Invalid runtimes manifest: ${execManifest.failed.get}")
-      abort()
+      abort("Bad configuration, cannot start.")
     }
 
-    val proposedInvokerId: Option[Int] = args.headOption.map(_.toInt)
-    val assignedInvokerId = proposedInvokerId
+    // process command line arguments
+    // We accept the command line grammar of:
+    // Usage: invoker [options] [<proposedInvokerId>]
+    //    --name <value>   a unique name to use for this invoker
+    //    --id <value>     proposed invokerId
+    def parse(ls: List[String], c: CmdLineArgs): CmdLineArgs = {
+      ls match {
+        case "--name" :: name :: tail                        => parse(tail, c.copy(name = Some(name)))
+        case "--id" :: id :: tail if Try(id.toInt).isSuccess => parse(tail, c.copy(id = Some(id.toInt)))
+        case id :: Nil if Try(id.toInt).isSuccess            => c.copy(id = Some(id.toInt))
+        case Nil                                             => c
+        case _                                               => abort(s"Error processing command line arguments $ls")
+      }
+    }
+    val cmdLineArgs = parse(args.toList, CmdLineArgs())
+    logger.info(this, "Command line arguments parsed to yield " + cmdLineArgs)
+
+    val assignedInvokerId = cmdLineArgs.id
       .map { id =>
         logger.info(this, s"invokerReg: using proposedInvokerId ${id}")
         id
       }
       .getOrElse {
-        val invokerName = config.invokerName
-        val redisClient = new RedisClient(config.redisHostName, config.redisHostPort.toInt)
-        val assignedId = redisClient
-          .hget("controller:registar:idAssignments", invokerName)
-          .map { oldId =>
-            logger.info(this, s"invokerReg: invoker ${invokerName} was assigned its previous invokerId ${oldId}")
-            oldId.toInt
-          }
-          .getOrElse {
-            // If key not present, incr initializes to 0 before applying increment.
-            // Convert from 1-based to 0-based invokerIds by subtracting 1 from incr's result
-            val newId = redisClient
-              .incr("controller:registrar:nextInvokerId")
-              .map { id =>
-                id.toInt - 1
+        if (config.zookeeperHost.startsWith(":") || config.zookeeperHost.endsWith(":")) {
+          abort(s"Must provide valid zookeeper host and port to use dynamicId assignment (${config.zookeeperHost})")
+        }
+        val invokerName = cmdLineArgs.name.getOrElse(config.invokerName)
+        if (invokerName.trim.isEmpty) {
+          abort("Invoker name can't be empty to use dynamicId assignment.")
+        }
+
+        logger.info(this, s"invokerReg: creating zkClient to ${config.zookeeperHost}")
+        val retryPolicy = new RetryUntilElapsed(5000, 500) // retry at 500ms intervals until 5 seconds have elapsed
+        val zkClient = CuratorFrameworkFactory.newClient(config.zookeeperHost, retryPolicy)
+        zkClient.start()
+        zkClient.blockUntilConnected()
+        logger.info(this, "invokerReg: connected to zookeeper")
+
+        val myIdPath = "/invokers/idAssignment/mapping/" + invokerName
+        val assignedId = Option(zkClient.checkExists().forPath(myIdPath)) match {
+          case None =>
+            // path doesn't exist -> no previous mapping for this invoker
+            logger.info(this, s"invokerReg: no prior assignment of id for invoker $invokerName")
+            val idCounter = new SharedCount(zkClient, "/invokers/idAssignment/counter", 0)
+            idCounter.start()
+
+            def assignId(): Int = {
+              val current = idCounter.getVersionedValue()
+              if (idCounter.trySetCount(current, current.getValue() + 1)) {
+                current.getValue()
+              } else {
+                assignId()
               }
-              .getOrElse {
-                logger.error(this, "Failed to increment invokerId")
-                abort()
-              }
-            redisClient.hset("controller:registar:idAssignments", invokerName, newId)
+            }
+
+            val newId = assignId()
+            idCounter.close()
+            zkClient.create().creatingParentContainersIfNeeded().forPath(myIdPath, BigInt(newId).toByteArray)
             logger.info(this, s"invokerReg: invoker ${invokerName} was assigned invokerId ${newId}")
             newId
-          }
-        redisClient.quit
+
+          case Some(_) =>
+            // path already exists -> there is a previous mapping for this invoker we should use
+            val rawOldId = zkClient.getData().forPath(myIdPath)
+            val oldId = BigInt(rawOldId).intValue
+            logger.info(this, s"invokerReg: invoker ${invokerName} was assigned its previous invokerId ${oldId}")
+            oldId
+        }
+
+        zkClient.close()
         assignedId
       }
-    val invokerInstance = InstanceId(assignedInvokerId);
+
+    val invokerInstance = InstanceId(assignedInvokerId)
     val msgProvider = SpiLoader.get[MessagingProvider]
     val producer = msgProvider.getProducer(config, ec)
-    val invoker = new InvokerReactive(config, invokerInstance, producer)
+    val invoker = try {
+      new InvokerReactive(config, invokerInstance, producer)
+    } catch {
+      case e: Exception => abort(s"Failed to initialize reactive invoker: ${e.getMessage}")
+    }
 
     Scheduler.scheduleWaitAtMost(1.seconds)(() => {
       producer.send("health", PingMessage(invokerInstance)).andThen {

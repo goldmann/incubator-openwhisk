@@ -160,7 +160,9 @@ trait BaseListOrGetFromCollection extends FullyQualifiedNames {
           expectedExitCode: Int = SUCCESS_EXIT,
           summary: Boolean = false,
           fieldFilter: Option[String] = None,
-          url: Option[Boolean] = None)(implicit wp: WskProps): RunResult
+          url: Option[Boolean] = None,
+          save: Option[Boolean] = None,
+          saveAs: Option[String] = None)(implicit wp: WskProps): RunResult
 }
 
 trait BaseDeleteFromCollection extends FullyQualifiedNames {
@@ -272,7 +274,7 @@ trait BaseActivation extends BaseRunWsk {
   def pollFor(N: Int,
               entity: Option[String],
               limit: Option[Int] = None,
-              since: Option[Instant],
+              since: Option[Instant] = None,
               retries: Int,
               pollPeriod: Duration = 1.second)(implicit wp: WskProps): Seq[String]
 

@@ -1,4 +1,4 @@
-FROM openwhisk/nodejs6action:1.0.0
+FROM openwhisk/nodejs6action:1.2.0
 
 # OpenShift compatibility
 RUN chgrp -R 0 /nodejsAction \
