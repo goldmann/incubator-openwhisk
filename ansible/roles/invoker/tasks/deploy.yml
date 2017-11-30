@@ -117,10 +117,12 @@
         -e INVOKER_OPTS='{{ invoker.arguments }}'
         -e COMPONENT_NAME='invoker{{ groups['invokers'].index(inventory_hostname) }}'
         -e PORT='8080'
-        -e KAFKA_HOST='{{ groups['kafka']|first }}'
-        -e KAFKA_HOST_PORT='{{ kafka.port }}'
-        -e ZOOKEEPER_HOST='{{ groups['kafka']|first }}'
-        -e ZOOKEEPER_HOST_PORT='{{ zookeeper.port }}'
+        -e KAFKA_HOSTS='{{ kafka_connect_string }}'
+        -e KAFKA_TOPICS_INVOKER_RETENTION_BYTES='{{ kafka.topics.invoker.retentionBytes }}'
+        -e KAFKA_TOPICS_INVOKER_RETENTION_MS='{{ kafka.topics.invoker.retentionMS }}'
+        -e KAFKA_TOPICS_INVOKER_SEGMENT_BYTES='{{ kafka.topics.invoker.segmentBytes }}'
+        -e KAFKA_REPLICATIONFACTOR='{{ kafka.replicationFactor }}'
+        -e ZOOKEEPER_HOSTS='{{ zookeeper_connect_string }}'
         -e DB_PROTOCOL='{{ db_protocol }}'
         -e DB_PROVIDER='{{ db_provider }}'
         -e DB_HOST='{{ db_host }}'
@@ -158,7 +160,7 @@
         -v {{ docker_sock | default('/var/run/docker.sock') }}:/var/run/docker.sock
         -p {{ invoker.port + groups['invokers'].index(inventory_hostname) }}:8080
         {{ docker_registry }}{{ docker.image.prefix }}/invoker:{{ docker.image.tag }}
-        /bin/sh -c "exec /invoker/bin/invoker {{ groups['invokers'].index(inventory_hostname) }} >> /logs/invoker{{ groups['invokers'].index(inventory_hostname) }}_logs.log 2>&1"
+        /bin/sh -c "exec /init.sh {{ groups['invokers'].index(inventory_hostname) }} >> /logs/invoker{{ groups['invokers'].index(inventory_hostname) }}_logs.log 2>&1"
 
 # todo: re-enable docker_container module once https://github.com/ansible/ansible-modules-core/issues/5054 is resolved
 

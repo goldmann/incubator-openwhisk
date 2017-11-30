@@ -21,4 +21,8 @@ COPY build/distributions/invoker.tar ./
 RUN tar xf invoker.tar && \
 rm -f invoker.tar
 
+COPY init.sh /
+RUN chmod +x init.sh
+
 EXPOSE 8080
+CMD ["init.sh", "0"]

@@ -42,7 +42,6 @@ import whisk.core.entity.ActivationEntityLimit
 import whisk.core.entity.ActivationResponse
 import whisk.core.entity.Exec
 import whisk.core.entity.size._
-import whisk.core.entity.size.SizeString
 import whisk.http.Messages
 
 @RunWith(classOf[JUnitRunner])
@@ -115,12 +114,7 @@ class ActionLimitsTests extends TestHelpers with WskTestHelpers {
       val run = wsk.action.invoke(name, Map("payload" -> attemptedSize.toBytes.toJson))
       withActivation(wsk.activation, run, totalWait = 120 seconds) { response =>
         val lines = response.logs.get
-        lines.last shouldBe Messages.truncateLogs(allowedSize)
-        (lines.length - 1) shouldBe (allowedSize.toBytes / bytesPerLine)
-        // dropping 39 characters (timestamp + stream name)
-        // then reform total string adding back newlines
-        val actual = lines.dropRight(1).map(_.drop(39)).mkString("", "\n", "\n").sizeInBytes.toBytes
-        actual shouldBe allowedSize.toBytes
+        lines.last should include(Messages.truncateLogs(allowedSize))
       }
   }
 
@@ -269,13 +263,13 @@ class ActionLimitsTests extends TestHelpers with WskTestHelpers {
   it should "be aborted when exceeding its memory limits" in withAssetCleaner(wskprops) { (wp, assetHelper) =>
     val name = "TestNodeJsMemoryExceeding"
     assetHelper.withCleaner(wsk.action, name, confirmDelete = true) {
-      val allowedMemory = 256.megabytes
+      val allowedMemory = 128.megabytes
       val actionName = TestUtils.getTestActionFilename("memoryWithGC.js")
       (action, _) =>
         action.create(name, Some(actionName), memory = Some(allowedMemory))
     }
 
-    val run = wsk.action.invoke(name, Map("payload" -> 512.toJson))
+    val run = wsk.action.invoke(name, Map("payload" -> 256.toJson))
     withActivation(wsk.activation, run) {
       _.response.result.get.fields("error") shouldBe Messages.memoryExhausted.toJson
     }

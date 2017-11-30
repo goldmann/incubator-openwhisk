@@ -619,11 +619,18 @@ class WskRestActivation extends RunWskRestCmd with HasActivationRest with WaitFo
    */
   override def console(duration: Duration, since: Option[Duration] = None, expectedExitCode: Int = SUCCESS_EXIT)(
     implicit wp: WskProps): RestResult = {
-    var sinceTime = System.currentTimeMillis()
-    sinceTime = since map { s =>
-      sinceTime - s.toMillis
-    } getOrElse sinceTime
-    waitForActivationConsole(duration, Instant.ofEpochMilli(sinceTime))
+    require(duration > 1.second, "duration must be at least 1 second")
+    val sinceTime = {
+      val now = System.currentTimeMillis()
+      since map { s =>
+        now - s.toMillis
+      } getOrElse now
+    }
+
+    retry({
+      val result = listActivation(since = Some(Instant.ofEpochMilli(sinceTime)))(wp)
+      if (result.stdout != "[]") result else throw new Throwable()
+    }, (duration / 1.second).toInt, Some(1.second))
   }
 
   /**
@@ -774,12 +781,6 @@ class WskRestActivation extends RunWskRestCmd with HasActivationRest with WaitFo
       Right(_)
     } getOrElse Left(s"Cannot find activation id from '$activation'")
 
-  }
-
-  def waitForActivationConsole(totalWait: Duration = 30 seconds, sinceTime: Instant)(
-    implicit wp: WskProps): RestResult = {
-    Thread.sleep(totalWait.toMillis)
-    listActivation(since = Some(sinceTime))(wp)
   }
 
   override def logs(activationId: Option[String] = None,
@@ -1180,6 +1181,7 @@ class RunWskRestCmd() extends FlatSpec with RunWskCmd with Matchers with ScalaFu
 
   implicit val config = PatienceConfig(100 seconds, 15 milliseconds)
   implicit val materializer = ActorMaterializer()
+  val idleTimeout = 5 minutes
   val queueSize = 10
   val maxOpenRequest = 1024
   val basePath = Path("/api/v1")
@@ -1223,7 +1225,8 @@ class RunWskRestCmd() extends FlatSpec with RunWskCmd with Matchers with ScalaFu
       HttpEntity(ContentTypes.`application/json`, b)
     } getOrElse HttpEntity(ContentTypes.`application/json`, "")
     val request = HttpRequest(method, uri, List(Authorization(creds)), entity = entity)
-    val connectionPoolSettings = ConnectionPoolSettings(actorSystem).withMaxOpenRequests(maxOpenRequest)
+    val connectionPoolSettings =
+      ConnectionPoolSettings(actorSystem).withMaxOpenRequests(maxOpenRequest).withIdleTimeout(idleTimeout)
     val pool = Http().cachedHostConnectionPoolHttps[Promise[HttpResponse]](
       host = WhiskProperties.getApiHost,
       connectionContext = connectionContext,

@@ -24,7 +24,7 @@ import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.Promise
-import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration._
 import scala.util.Failure
 import scala.util.Success
 import org.apache.kafka.clients.producer.RecordMetadata
@@ -51,8 +51,13 @@ import whisk.core.entity.Identity
 import whisk.core.entity.InstanceId
 import whisk.core.entity.UUID
 import whisk.core.entity.WhiskAction
+import whisk.core.entity.size._
 import whisk.core.entity.types.EntityStore
 import whisk.spi.SpiLoader
+
+import pureconfig._
+
+case class LoadbalancerConfig(blackboxFraction: Double, invokerBusyThreshold: Int)
 
 trait LoadBalancer {
 
@@ -86,11 +91,13 @@ class LoadBalancerService(config: WhiskConfig, instance: InstanceId, entityStore
   logging: Logging)
     extends LoadBalancer {
 
+  private val lbConfig = loadConfigOrThrow[LoadbalancerConfig]("whisk.loadbalancer")
+
   /** The execution context for futures */
   implicit val executionContext: ExecutionContext = actorSystem.dispatcher
 
   /** How many invokers are dedicated to blackbox images.  We range bound to something sensical regardless of configuration. */
-  private val blackboxFraction: Double = Math.max(0.0, Math.min(1.0, config.controllerBlackboxFraction))
+  private val blackboxFraction: Double = Math.max(0.0, Math.min(1.0, lbConfig.blackboxFraction))
   logging.info(this, s"blackboxFraction = $blackboxFraction")(TransactionId.loadbalancer)
 
   /** Feature switch for shared load balancer data **/
@@ -323,7 +330,7 @@ class LoadBalancerService(config: WhiskConfig, instance: InstanceId, entityStore
           case (instance, state) => (instance, state, currentActivations.getOrElse(instance.toString, 0))
         }
 
-        LoadBalancerService.schedule(invokersWithUsage, config.loadbalancerInvokerBusyThreshold, hash) match {
+        LoadBalancerService.schedule(invokersWithUsage, lbConfig.invokerBusyThreshold, hash) match {
           case Some(invoker) => Future.successful(invoker)
           case None =>
             logging.error(this, s"all invokers down")(TransactionId.invokerHealth)
@@ -341,11 +348,13 @@ class LoadBalancerService(config: WhiskConfig, instance: InstanceId, entityStore
 
 object LoadBalancerService {
   def requiredProperties =
-    kafkaHost ++ Map(
-      loadbalancerInvokerBusyThreshold -> null,
-      controllerBlackboxFraction -> null,
-      controllerLocalBookkeeping -> null,
-      controllerSeedNodes -> null)
+    kafkaHosts ++
+      Map(
+        kafkaTopicsCompletedRetentionBytes -> 1024.MB.toBytes.toString,
+        kafkaTopicsCompletedRetentionMS -> 1.hour.toMillis.toString,
+        kafkaTopicsCompletedSegmentBytes -> 512.MB.toBytes.toString,
+        kafkaReplicationFactor -> "1") ++
+      Map(controllerLocalBookkeeping -> null, controllerSeedNodes -> null)
 
   /** Memoizes the result of `f` for later use. */
   def memoize[I, O](f: I => O): I => O = new scala.collection.mutable.HashMap[I, O]() {
