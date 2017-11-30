@@ -18,31 +18,27 @@
 package whisk.core.containerpool.kubernetes
 
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicReference
+
+import akka.stream.StreamLimitReachedException
+import akka.stream.scaladsl.Framing.FramingException
+import akka.stream.scaladsl.{Framing, Source}
+import akka.util.ByteString
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration._
-import scala.concurrent.duration.FiniteDuration
-import scala.util.Failure
-import scala.util.Success
-
 import spray.json._
 import spray.json.DefaultJsonProtocol._
 import whisk.common.Logging
-import whisk.common.LoggingMarkers
 import whisk.common.TransactionId
 import whisk.core.containerpool.Container
-import whisk.core.containerpool.InitializationError
-import whisk.core.containerpool.Interval
 import whisk.core.containerpool.WhiskContainerStartupError
 import whisk.core.containerpool.ContainerId
 import whisk.core.containerpool.ContainerAddress
-import whisk.core.containerpool.docker.DockerActionLogDriver
-import whisk.core.containerpool.docker.HttpUtils
-import whisk.core.containerpool.docker.RunResult
-import whisk.core.entity.ActivationResponse
+import whisk.core.containerpool.docker.{CompleteAfterOccurrences, DockerContainer, OccurrencesNotFoundException}
+import whisk.core.containerpool.logging.LogLine
 import whisk.core.entity.ByteSize
-import whisk.core.entity.size._
 import whisk.http.Messages
 
 object KubernetesContainer {
@@ -92,17 +88,16 @@ object KubernetesContainer {
  *
  * @constructor
  * @param id the id of the container
- * @param ip the ip of the container
+ * @param addr the ip & port of the container
  */
 class KubernetesContainer(protected val id: ContainerId, protected val addr: ContainerAddress)(
   implicit kubernetes: KubernetesApi,
   protected val ec: ExecutionContext,
   protected val logging: Logging)
-    extends Container
-    with DockerActionLogDriver {
+    extends Container {
 
   /** The last read timestamp in the log file */
-  private var lastTimestamp = ""
+  private val lastTimestamp = new AtomicReference("")
 
   protected val logsRetryCount = 15
   protected val logsRetryWait = 100.millis
@@ -118,35 +113,47 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
     kubernetes.rm(id)
   }
 
-  def logs(limit: ByteSize, waitForSentinel: Boolean)(implicit transid: TransactionId): Future[Vector[String]] = {
+  def logs(limit: ByteSize, waitForSentinel: Boolean)(implicit transid: TransactionId): Source[ByteString, Any] = {
 
-    def readLogs(retries: Int): Future[Vector[String]] = {
-      kubernetes
-        .logs(id, lastTimestamp)
-        .flatMap { rawLog =>
-          val lastTS = rawLog.lines.toSeq.lastOption
-            .getOrElse("""{"time":""}""")
-            .parseJson
-            .asJsObject
-            .fields("time")
-            .convertTo[String]
-          val (isComplete, isTruncated, formattedLogs) = processJsonDriverLogContents(rawLog, waitForSentinel, limit)
+    val activationMarkerCheck: ByteString ⇒ Boolean = { bs ⇒
+      if (bs.containsSlice(DockerContainer.ActivationSentinel)) {
 
-          if (retries > 0 && !isComplete && !isTruncated) {
-            logging.info(this, s"log cursor advanced but missing sentinel, trying $retries more times")
-            Thread.sleep(logsRetryWait.toMillis)
-            readLogs(retries - 1)
-          } else {
-            lastTimestamp = lastTS
-            Future.successful(formattedLogs)
-          }
-        }
-        .andThen {
-          case Failure(e) =>
-            logging.error(this, s"Failed to obtain logs of ${id.asString}: ${e.getClass} - ${e.getMessage}")
-        }
+        val lastTS = bs.utf8String.lines.toSeq.lastOption
+          .getOrElse("""{"time":""}""")
+          .parseJson
+          .asJsObject
+          .fields("time")
+          .convertTo[String]
+
+        // not thrilled about the closure here, but it's against an atomic reference so should be safe
+        // longterm we should see if we can work w/ kubernetes logs without needing a last timestamp
+        lastTimestamp.set(lastTS)
+
+        true
+      } else false
     }
 
-    readLogs(logsRetryCount)
+    kubernetes
+      .logs(id, lastTimestamp.get()) // todo - same sentinel check behavior as DockerContainer should be implemented?
+      .via(Framing.delimiter(delimiter, limit.toBytes.toInt))
+      .via(new CompleteAfterOccurrences(activationMarkerCheck, 2, waitForSentinel))
+      .recover {
+        case _: StreamLimitReachedException =>
+          // While the stream has already ended by failing the limitWeighted stage above, we inject a truncation
+          // notice downstream, which will be processed as usual. This will be the last element of the stream.
+          ByteString(LogLine(Instant.now.toString, "stderr", Messages.truncateLogs(limit)).toJson.compactPrint)
+        case _: FramingException =>
+          ByteString(
+            LogLine(Instant.now.toString, "stderr", "Framing Exception in Kubernetes Container Logs.").toJson.compactPrint)
+        case _: OccurrencesNotFoundException =>
+          // Stream has already ended and we insert a notice that data might be missing from the logs. While a
+          // FramingException can also mean exceeding the limits, we cannot decide which case happened so we resort
+          // to the general error message. This will be the last element of the stream.
+          ByteString(LogLine(Instant.now.toString, "stderr", Messages.logFailure).toJson.compactPrint)
+      }
+
   }
+
+  /** Delimiter used to split log-lines as written by the json-log-driver. */
+  private val delimiter = ByteString("\n")
 }
