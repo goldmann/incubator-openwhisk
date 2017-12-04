@@ -34,4 +34,3 @@ RUN update-alternatives --install "/usr/bin/java" "java" "${JRE_HOME}/bin/java" 
 
 COPY transformEnvironment.sh /
 RUN chmod +x transformEnvironment.sh
->>>>>>> master
