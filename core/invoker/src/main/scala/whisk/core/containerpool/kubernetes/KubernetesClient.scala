@@ -22,13 +22,14 @@ import java.nio.file.Files
 import java.nio.file.Paths
 
 import akka.event.Logging.ErrorLevel
+import akka.stream.scaladsl.Source
+import akka.util.ByteString
 import whisk.common.Logging
 import whisk.common.LoggingMarkers
 import whisk.common.TransactionId
 import whisk.core.containerpool.ContainerId
 import whisk.core.containerpool.ContainerAddress
 import whisk.core.containerpool.docker.ProcessRunner
-import whisk.core.containerpool.docker.DockerActionLogDriver
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -37,10 +38,8 @@ import scala.concurrent.duration._
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
-
 import spray.json._
 import spray.json.DefaultJsonProtocol._
-
 import io.fabric8.kubernetes.client.DefaultKubernetesClient
 import io.fabric8.kubernetes.client.utils.URLUtils
 import okhttp3.Request
@@ -124,65 +123,57 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
   def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit] =
     runCmd("delete", "--now", "pod", "-l", s"$key=$value").map(_ => ())
 
-  def logs(id: ContainerId, sinceTime: String)(implicit transid: TransactionId): Future[String] = {
-    Future {
-      blocking {
-        val sinceTimePart = if (!sinceTime.isEmpty) {
-          s"&sinceTime=${sinceTime}"
-        } else ""
-        val url = new URL(
-          URLUtils.join(
-            kubeRestClient.getMasterUrl.toString,
-            "api",
-            "v1",
-            "namespaces",
-            kubeRestClient.getNamespace,
-            "pods",
-            id.asString,
-            "log?timestamps=true" ++ sinceTimePart))
-        val request = new Request.Builder().get().url(url).build
-        val response = kubeRestClient.getHttpClient.newCall(request).execute
-        if (!response.isSuccessful) {
-          Future.failed(
-            new Exception(s"Kubernetes API returned HTTP status ${response.code} when trying to retrieve pod logs"))
+  def logs(id: ContainerId, sinceTime: String)(implicit transid: TransactionId): Source[ByteString, Any] = {
+
+    Source.fromFuture(
+      Future {
+        blocking {
+          val sinceTimePart = if (!sinceTime.isEmpty) {
+            s"&sinceTime=${sinceTime}"
+          } else ""
+          val url = new URL(
+            URLUtils.join(
+              kubeRestClient.getMasterUrl.toString,
+              "api",
+              "v1",
+              "namespaces",
+              kubeRestClient.getNamespace,
+              "pods",
+              id.asString,
+              "log?timestamps=true" ++ sinceTimePart))
+          val request = new Request.Builder().get().url(url).build
+          val response = kubeRestClient.getHttpClient.newCall(request).execute
+          if (!response.isSuccessful) {
+            Future.failed(
+              new Exception(s"Kubernetes API returned HTTP status ${response.code} when trying to retrieve pod logs"))
+          }
+          response.body.string
         }
-        response.body.string
+      }.map { output =>
+        val original = output.lines.toSeq
+        val relevant = original.dropWhile(s => !s.startsWith(sinceTime))
+        val result =
+          if (!relevant.isEmpty && original.size > relevant.size) {
+            // drop matching timestamp from previous activation
+            relevant.drop(1)
+          } else {
+            original
+          }
+        // map the logs to the docker json file format expected by
+        // ActionLogDriver.processJsonDriverLogContents
+        // TODO - jcrossley - you'll need to reimplement the logic intended by this with the new format
+        //var sentinelSeen = false
+        ByteString(result
+          .map { line =>
+            val pos = line.indexOf(" ")
+            val ts = line.substring(0, pos)
+            val msg = line.substring(pos + 1)
+            val stream = "stdout"
+            JsObject("log" -> msg.toJson, "stream" -> stream.toJson, "time" -> ts.toJson)
+          }
+          .mkString("\n"))
       }
-    }.map { output =>
-      val original = output.lines.toSeq
-      val relevant = original.dropWhile(s => !s.startsWith(sinceTime))
-      val result =
-        if (!relevant.isEmpty && original.size > relevant.size) {
-          // drop matching timestamp from previous activation
-          relevant.drop(1)
-        } else {
-          original
-        }
-      // map the logs to the docker json file format expected by
-      // ActionLogDriver.processJsonDriverLogContents
-      var sentinelSeen = false
-      result
-        .map { line =>
-          val pos = line.indexOf(" ")
-          val ts = line.substring(0, pos)
-          val msg = line.substring(pos + 1)
-          // TODO: Until we're able to distinguish stdout/stderr
-          // from kubectl, we assume stdout except for one sentinel
-          val stream =
-            if (msg.trim == DockerActionLogDriver.LOG_ACTIVATION_SENTINEL) {
-              if (!sentinelSeen) {
-                sentinelSeen = true
-                "stdout"
-              } else {
-                "stderr"
-              }
-            } else {
-              "stdout"
-            }
-          JsObject("log" -> msg.toJson, "stream" -> stream.toJson, "time" -> ts.toJson)
-        }
-        .mkString("\n")
-    }
+    )
   }
 
   private def runCmd(args: String*)(implicit transid: TransactionId): Future[String] = {
@@ -205,5 +196,5 @@ trait KubernetesApi {
 
   def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit]
 
-  def logs(containerId: ContainerId, sinceTime: String)(implicit transid: TransactionId): Future[String]
+  def logs(containerId: ContainerId, sinceTime: String)(implicit transid: TransactionId): Source[ByteString, Any]
 }
