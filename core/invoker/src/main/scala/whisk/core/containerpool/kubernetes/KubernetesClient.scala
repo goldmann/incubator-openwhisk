@@ -125,45 +125,45 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
 
   def logs(id: ContainerId, sinceTime: String)(implicit transid: TransactionId): Source[ByteString, Any] = {
 
-    Source.fromFuture(
-      Future {
-        blocking {
-          val sinceTimePart = if (!sinceTime.isEmpty) {
-            s"&sinceTime=${sinceTime}"
-          } else ""
-          val url = new URL(
-            URLUtils.join(
-              kubeRestClient.getMasterUrl.toString,
-              "api",
-              "v1",
-              "namespaces",
-              kubeRestClient.getNamespace,
-              "pods",
-              id.asString,
-              "log?timestamps=true" ++ sinceTimePart))
-          val request = new Request.Builder().get().url(url).build
-          val response = kubeRestClient.getHttpClient.newCall(request).execute
-          if (!response.isSuccessful) {
-            Future.failed(
-              new Exception(s"Kubernetes API returned HTTP status ${response.code} when trying to retrieve pod logs"))
-          }
-          response.body.string
+    Source.fromFuture(Future {
+      blocking {
+        val sinceTimePart = if (!sinceTime.isEmpty) {
+          s"&sinceTime=${sinceTime}"
+        } else ""
+        val url = new URL(
+          URLUtils.join(
+            kubeRestClient.getMasterUrl.toString,
+            "api",
+            "v1",
+            "namespaces",
+            kubeRestClient.getNamespace,
+            "pods",
+            id.asString,
+            "log?timestamps=true" ++ sinceTimePart))
+        val request = new Request.Builder().get().url(url).build
+        val response = kubeRestClient.getHttpClient.newCall(request).execute
+        if (!response.isSuccessful) {
+          Future.failed(
+            new Exception(s"Kubernetes API returned HTTP status ${response.code} when trying to retrieve pod logs"))
         }
-      }.map { output =>
-        val original = output.lines.toSeq
-        val relevant = original.dropWhile(s => !s.startsWith(sinceTime))
-        val result =
-          if (!relevant.isEmpty && original.size > relevant.size) {
-            // drop matching timestamp from previous activation
-            relevant.drop(1)
-          } else {
-            original
-          }
-        // map the logs to the docker json file format expected by
-        // ActionLogDriver.processJsonDriverLogContents
-        // TODO - jcrossley - you'll need to reimplement the logic intended by this with the new format
-        //var sentinelSeen = false
-        ByteString(result
+        response.body.string
+      }
+    }.map { output =>
+      val original = output.lines.toSeq
+      val relevant = original.dropWhile(s => !s.startsWith(sinceTime))
+      val result =
+        if (!relevant.isEmpty && original.size > relevant.size) {
+          // drop matching timestamp from previous activation
+          relevant.drop(1)
+        } else {
+          original
+        }
+      // map the logs to the docker json file format expected by
+      // ActionLogDriver.processJsonDriverLogContents
+      // TODO - jcrossley - you'll need to reimplement the logic intended by this with the new format
+      //var sentinelSeen = false
+      ByteString(
+        result
           .map { line =>
             val pos = line.indexOf(" ")
             val ts = line.substring(0, pos)
@@ -172,8 +172,7 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
             JsObject("log" -> msg.toJson, "stream" -> stream.toJson, "time" -> ts.toJson)
           }
           .mkString("\n"))
-      }
-    )
+    })
   }
 
   private def runCmd(args: String*)(implicit transid: TransactionId): Future[String] = {

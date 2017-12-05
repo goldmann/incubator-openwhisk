@@ -37,7 +37,7 @@ import akka.stream.scaladsl.{Framing, Source}
 import akka.stream.stage._
 import akka.util.ByteString
 import spray.json._
-import whisk.core.containerpool.logging.{ LogLine => CoreLogLine }
+import whisk.core.containerpool.logging.{LogLine => CoreLogLine}
 import whisk.http.Messages
 
 object DockerContainer {

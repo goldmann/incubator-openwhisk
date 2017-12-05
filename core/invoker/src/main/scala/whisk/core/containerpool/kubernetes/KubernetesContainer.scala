@@ -118,7 +118,11 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
       .logs(id, lastTimestamp.get()) // todo - same sentinel check behavior as DockerContainer should be implemented?
       .via(Framing.delimiter(delimiter, limit.toBytes.toInt))
       .map { bs => // translation of previous logic to retrieve last timestamp in logs. needs refactor
-        val lastTS = bs.toString().lines.toSeq.lastOption
+        val lastTS = bs
+          .toString()
+          .lines
+          .toSeq
+          .lastOption
           .getOrElse("""{"time":""}""")
           .parseJson
           .asJsObject
@@ -134,7 +138,8 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
           // notice downstream, which will be processed as usual. This will be the last element of the stream.
           ByteString(LogLine(Instant.now.toString, "stderr", Messages.truncateLogs(limit)).toJson.compactPrint)
         case _: FramingException =>
-          ByteString(LogLine(Instant.now.toString, "stderr", "Framing Exception in Kubernetes Container Logs").toJson.compactPrint)
+          ByteString(
+            LogLine(Instant.now.toString, "stderr", "Framing Exception in Kubernetes Container Logs").toJson.compactPrint)
         case _: OccurrencesNotFoundException =>
           // Stream has already ended and we insert a notice that data might be missing from the logs. While a
           // FramingException can also mean exceeding the limits, we cannot decide which case happened so we resort
