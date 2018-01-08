@@ -114,12 +114,13 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
 
   def logs(limit: ByteSize, waitForSentinel: Boolean)(implicit transid: TransactionId): Source[ByteString, Any] = {
 
+
     kubernetes
       .logs(id, lastTimestamp.get()) // todo - same sentinel check behavior as DockerContainer should be implemented?
       .via(Framing.delimiter(delimiter, limit.toBytes.toInt))
       .map { bs => // translation of previous logic to retrieve last timestamp in logs. needs refactor
         val lastTS = bs
-          .toString()
+          .utf8String
           .lines
           .toSeq
           .lastOption
@@ -128,6 +129,7 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
           .asJsObject
           .fields("time")
           .convertTo[String]
+
         lastTimestamp.set(lastTS)
         bs
       }

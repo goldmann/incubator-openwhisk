@@ -31,6 +31,7 @@ import common.BaseWsk
 import common.WskActorSystem
 import common.WskAdmin
 import common.WskProps
+import common.rest.ApiAction
 import common.WskTestHelpers
 import spray.json._
 import spray.json.DefaultJsonProtocol._
