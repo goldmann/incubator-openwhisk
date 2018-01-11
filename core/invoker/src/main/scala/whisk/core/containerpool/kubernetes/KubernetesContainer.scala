@@ -96,7 +96,7 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
     extends Container {
 
   /** The last read timestamp in the log file */
-  private var lastTimestamp = new AtomicReference("")
+  private val lastTimestamp = new AtomicReference("")
 
   protected val logsRetryCount = 15
   protected val logsRetryWait = 100.millis
@@ -114,10 +114,9 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
 
   def logs(limit: ByteSize, waitForSentinel: Boolean)(implicit transid: TransactionId): Source[ByteString, Any] = {
 
-    kubernetes
-      .logs(id, lastTimestamp.get()) // todo - same sentinel check behavior as DockerContainer should be implemented?
-      .via(Framing.delimiter(delimiter, limit.toBytes.toInt))
-      .map { bs => // translation of previous logic to retrieve last timestamp in logs. needs refactor
+    val activationMarkerCheck: ByteString ⇒ Boolean = { bs ⇒
+      if (bs.containsSlice(DockerContainer.ActivationSentinel)) {
+
         val lastTS = bs.utf8String.lines.toSeq.lastOption
           .getOrElse("""{"time":""}""")
           .parseJson
@@ -125,10 +124,18 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
           .fields("time")
           .convertTo[String]
 
+        // not thrilled about the closure here, but it's against an atomic reference so should be safe
+        // longterm we should see if we can work w/ kubernetes logs without needing a last timestamp
         lastTimestamp.set(lastTS)
-        bs
-      }
-      .via(new CompleteAfterOccurrences(_.containsSlice(DockerContainer.ActivationSentinel), 2, waitForSentinel))
+
+        true
+      } else false
+    }
+
+    kubernetes
+      .logs(id, lastTimestamp.get()) // todo - same sentinel check behavior as DockerContainer should be implemented?
+      .via(Framing.delimiter(delimiter, limit.toBytes.toInt))
+      .via(new CompleteAfterOccurrences(activationMarkerCheck, 2, waitForSentinel))
       .recover {
         case _: StreamLimitReachedException =>
           // While the stream has already ended by failing the limitWeighted stage above, we inject a truncation
@@ -136,7 +143,7 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
           ByteString(LogLine(Instant.now.toString, "stderr", Messages.truncateLogs(limit)).toJson.compactPrint)
         case _: FramingException =>
           ByteString(
-            LogLine(Instant.now.toString, "stderr", "Framing Exception in Kubernetes Container Logs").toJson.compactPrint)
+            LogLine(Instant.now.toString, "stderr", "Framing Exception in Kubernetes Container Logs.").toJson.compactPrint)
         case _: OccurrencesNotFoundException =>
           // Stream has already ended and we insert a notice that data might be missing from the logs. While a
           // FramingException can also mean exceeding the limits, we cannot decide which case happened so we resort

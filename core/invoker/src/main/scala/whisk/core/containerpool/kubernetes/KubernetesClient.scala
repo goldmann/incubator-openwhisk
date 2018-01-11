@@ -160,7 +160,7 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
         }
       // map the logs to the docker json file format expected by
       // ActionLogDriver.processJsonDriverLogContents
-      // TODO - jcrossley - you'll need to reimplement the logic intended by this with the new format
+      // TODO - jcrossley - you'll probably want to clean up / reimplement the logic intended by this with the new format
       //var sentinelSeen = false
       ByteString(
         result
@@ -168,10 +168,12 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
             val pos = line.indexOf(" ")
             val ts = line.substring(0, pos)
             val msg = line.substring(pos + 1)
+            // TODO - can we get the proper stream name from kubernetes? Some stuff is stderr
             val stream = "stdout"
             JsObject("log" -> msg.toJson, "stream" -> stream.toJson, "time" -> ts.toJson)
           }
-          .mkString("\n"))
+          .mkString("\n") + "\n" // trailing newline is necessary or the frame won't be decoded and break the akka stream
+      )
     })
   }
 
