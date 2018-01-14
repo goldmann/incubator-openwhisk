@@ -18,19 +18,20 @@
 package whisk.core.containerpool
 
 import scala.collection.immutable
-
 import akka.actor.Actor
 import akka.actor.ActorRef
 import akka.actor.ActorRefFactory
 import akka.actor.Props
 import whisk.common.AkkaLogging
-
+import whisk.common.TransactionId
 import whisk.core.entity.ByteSize
 import whisk.core.entity.CodeExec
 import whisk.core.entity.EntityName
 import whisk.core.entity.ExecutableWhiskAction
 import whisk.core.entity.size._
 import whisk.core.connector.MessageFeed
+
+import scala.concurrent.duration._
 
 sealed trait WorkerState
 case object Busy extends WorkerState
@@ -70,9 +71,10 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
   var freePool = immutable.Map.empty[ActorRef, ContainerData]
   var busyPool = immutable.Map.empty[ActorRef, ContainerData]
   var prewarmedPool = immutable.Map.empty[ActorRef, ContainerData]
+  val logMessageInterval = 10.seconds
 
   prewarmConfig.foreach { config =>
-    logging.info(this, s"pre-warming ${config.count} ${config.exec.kind} containers")
+    logging.info(this, s"pre-warming ${config.count} ${config.exec.kind} containers")(TransactionId.invokerWarmup)
     (1 to config.count).foreach { _ =>
       prewarmContainer(config.exec, config.memoryLimit)
     }
@@ -80,6 +82,10 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
 
   def receive: Receive = {
     // A job to run on a container
+    //
+    // Run messages are received either via the feed or from child containers which cannot process
+    // their requests and send them back to the pool for rescheduling (this may happen if "docker" operations
+    // fail for example, or a container has aged and was destroying itself when a new request was assigned)
     case r: Run =>
       val container = if (busyPool.size < maxActiveContainers) {
         // Schedule a job to a warm container
@@ -94,7 +100,7 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
           }
           .orElse {
             // Remove a container and create a new one for the given job
-            ContainerPool.remove(r.action, r.msg.user.namespace, freePool).map { toDelete =>
+            ContainerPool.remove(freePool).map { toDelete =>
               removeContainer(toDelete)
               takePrewarmContainer(r.action).getOrElse {
                 createContainer()
@@ -109,8 +115,21 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
           freePool = freePool - actor
           actor ! r // forwards the run request to the container
         case None =>
-          logging.error(this, "Rescheduling Run message, too many message in the pool")(r.msg.transid)
-          self ! r
+          // this can also happen if createContainer fails to start a new container, or
+          // if a job is rescheduled but the container it was allocated to has not yet destroyed itself
+          // (and a new container would over commit the pool)
+          val isErrorLogged = r.retryLogDeadline.map(_.isOverdue).getOrElse(true)
+          val retryLogDeadline = if (isErrorLogged) {
+            logging.error(
+              this,
+              s"Rescheduling Run message, too many message in the pool, freePoolSize: ${freePool.size}, " +
+                s"busyPoolSize: ${busyPool.size}, maxActiveContainers $maxActiveContainers, " +
+                s"userNamespace: ${r.msg.user.namespace}, action: ${r.action}")(r.msg.transid)
+            Some(logMessageInterval.fromNow)
+          } else {
+            r.retryLogDeadline
+          }
+          self ! Run(r.action, r.msg, retryLogDeadline)
       }
 
     // Container is free to take more work
@@ -130,8 +149,18 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
       freePool = freePool - sender()
       busyPool.get(sender()).foreach { _ =>
         busyPool = busyPool - sender()
+        // container was busy, so there is capacity to accept another job request
         feed ! MessageFeed.Processed
       }
+
+    // This message is received for one of these reasons:
+    // 1. Container errored while resuming a warm container, could not process the job, and sent the job back
+    // 2. The container aged, is destroying itself, and was assigned a job which it had to send back
+    // 3. The container aged and is destroying itself
+    // Update the free/busy lists but no message is sent to the feed since there is no change in capacity yet
+    case RescheduleJob =>
+      freePool = freePool - sender()
+      busyPool = busyPool - sender()
   }
 
   /** Creates a new container and updates state accordingly. */
@@ -199,9 +228,9 @@ object ContainerPool {
    * @param idles a map of idle containers, awaiting work
    * @return a container if one found
    */
-  def schedule[A](action: ExecutableWhiskAction,
-                  invocationNamespace: EntityName,
-                  idles: Map[A, ContainerData]): Option[(A, ContainerData)] = {
+  protected[containerpool] def schedule[A](action: ExecutableWhiskAction,
+                                           invocationNamespace: EntityName,
+                                           idles: Map[A, ContainerData]): Option[(A, ContainerData)] = {
     idles.find {
       case (_, WarmedData(_, `invocationNamespace`, `action`, _)) => true
       case _                                                      => false
@@ -209,21 +238,17 @@ object ContainerPool {
   }
 
   /**
-   * Finds the best container to remove to make space for the job passed to run.
+   * Finds the oldest previously used container to remove to make space for the job passed to run.
    *
-   * Determines the least recently used Free container in the pool.
+   * NOTE: This method is never called to remove an action that is in the pool already,
+   * since this would be picked up earlier in the scheduler and the container reused.
    *
-   * @param action the action that wants to get a container
-   * @param invocationNamespace the namespace, that wants to run the action
    * @param pool a map of all free containers in the pool
    * @return a container to be removed iff found
    */
-  def remove[A](action: ExecutableWhiskAction,
-                invocationNamespace: EntityName,
-                pool: Map[A, ContainerData]): Option[A] = {
-    // Try to find a Free container that is initialized with any OTHER action
+  protected[containerpool] def remove[A](pool: Map[A, ContainerData]): Option[A] = {
     val freeContainers = pool.collect {
-      case (ref, w: WarmedData) if (w.action != action || w.invocationNamespace != invocationNamespace) => ref -> w
+      case (ref, w: WarmedData) => ref -> w
     }
 
     if (freeContainers.nonEmpty) {

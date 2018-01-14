@@ -29,16 +29,11 @@ import scala.language.postfixOps
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
-
 import spray.json._
 import spray.json.DefaultJsonProtocol._
 import whisk.common.TransactionCounter
 import whisk.common.TransactionId
-import whisk.core.database.ArtifactStore
-import whisk.core.database.CouchDbRestClient
-import whisk.core.database.DocumentFactory
-import whisk.core.database.NoDocumentException
-import whisk.core.database.StaleParameter
+import whisk.core.database._
 import whisk.core.entity._
 import whisk.core.entity.types.AuthStore
 import whisk.core.entity.types.EntityStore
@@ -51,7 +46,6 @@ import whisk.core.entity.types.EntityStore
  */
 trait DbUtils extends TransactionCounter {
   implicit val dbOpTimeout = 15 seconds
-  override val numberOfInstances = 1
   override val instanceOrdinal = 0
   val instance = InstanceId(instanceOrdinal)
   val docsToDelete = ListBuffer[(ArtifactStore[_], DocInfo)]()
@@ -91,11 +85,31 @@ trait DbUtils extends TransactionCounter {
   def waitOnView[Au](db: ArtifactStore[Au], namespace: EntityName, count: Int, view: View)(
     implicit context: ExecutionContext,
     transid: TransactionId,
-    timeout: Duration) = {
+    timeout: Duration): Unit = waitOnViewImpl(db, namespace.asString, count, view)
+
+  /**
+   * Wait on a view to update with documents added to namespace. This uses retry above,
+   * where the step performs a direct db query to retrieve the view and check the count
+   * matches the given value.
+   */
+  def waitOnView[Au](db: ArtifactStore[Au], path: EntityPath, count: Int, view: View)(
+    implicit context: ExecutionContext,
+    transid: TransactionId,
+    timeout: Duration): Unit = waitOnViewImpl(db, path.asString, count, view)
+
+  /**
+   * Wait on a view to update with documents added to namespace. This uses retry above,
+   * where the step performs a direct db query to retrieve the view and check the count
+   * matches the given value.
+   */
+  private def waitOnViewImpl[Au](db: ArtifactStore[Au], key: String, count: Int, view: View)(
+    implicit context: ExecutionContext,
+    transid: TransactionId,
+    timeout: Duration): Unit = {
     val success = retry(
       () => {
-        val startKey = List(namespace.asString)
-        val endKey = List(namespace.asString, WhiskEntityQueries.TOP)
+        val startKey = List(key)
+        val endKey = List(key, WhiskEntityQueries.TOP)
         db.query(view.name, startKey, endKey, 0, 0, false, true, false, StaleParameter.No) map { l =>
           if (l.length != count) {
             throw RetryOp()
@@ -180,10 +194,12 @@ trait DbUtils extends TransactionCounter {
   /**
    * Gets document by id from datastore, and add it to gc queue to delete after the test completes.
    */
-  def get[A, Au >: A](db: ArtifactStore[Au], docid: DocId, factory: DocumentFactory[A], garbageCollect: Boolean = true)(
-    implicit transid: TransactionId,
-    timeout: Duration = 10 seconds,
-    ma: Manifest[A]): A = {
+  def get[A <: DocumentRevisionProvider, Au >: A](db: ArtifactStore[Au],
+                                                  docid: DocId,
+                                                  factory: DocumentFactory[A],
+                                                  garbageCollect: Boolean = true)(implicit transid: TransactionId,
+                                                                                  timeout: Duration = 10 seconds,
+                                                                                  ma: Manifest[A]): A = {
     val docFuture = factory.get(db, docid)
     val doc = Await.result(docFuture, timeout)
     assert(doc != null)
@@ -215,10 +231,12 @@ trait DbUtils extends TransactionCounter {
   /**
    * Puts a document 'entity' into the datastore, then do a get to retrieve it and confirm the identity.
    */
-  def putGetCheck[A, Au >: A](db: ArtifactStore[Au], entity: A, factory: DocumentFactory[A], gc: Boolean = true)(
-    implicit transid: TransactionId,
-    timeout: Duration = 10 seconds,
-    ma: Manifest[A]): (DocInfo, A) = {
+  def putGetCheck[A <: DocumentRevisionProvider, Au >: A](db: ArtifactStore[Au],
+                                                          entity: A,
+                                                          factory: DocumentFactory[A],
+                                                          gc: Boolean = true)(implicit transid: TransactionId,
+                                                                              timeout: Duration = 10 seconds,
+                                                                              ma: Manifest[A]): (DocInfo, A) = {
     val doc = put(db, entity, gc)
     assert(doc != null && doc.id.asString != null && doc.rev.asString != null)
     val future = factory.get(db, doc.id, doc.rev)
