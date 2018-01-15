@@ -21,9 +21,11 @@ import java.net.URL
 import java.nio.file.Files
 import java.nio.file.Paths
 
+import akka.actor.ActorSystem
 import akka.event.Logging.ErrorLevel
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
+import pureconfig.loadConfigOrThrow
 import whisk.common.Logging
 import whisk.common.LoggingMarkers
 import whisk.common.TransactionId
@@ -31,6 +33,7 @@ import whisk.core.containerpool.ContainerId
 import whisk.core.containerpool.ContainerAddress
 import whisk.core.containerpool.docker.ProcessRunner
 
+import scala.concurrent.duration.Duration
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.blocking
@@ -45,6 +48,14 @@ import io.fabric8.kubernetes.client.utils.URLUtils
 import okhttp3.Request
 
 /**
+ * Configuration for kubernetes client command timeouts.
+ */
+case class KubernetesClientTimeoutConfig(run: Duration,
+                                         rm: Duration,
+                                         inspect: Duration,
+                                         logs: Duration)
+
+/**
  * Serves as interface to the kubectl CLI tool.
  *
  * Be cautious with the ExecutionContext passed to this, as the
@@ -52,7 +63,9 @@ import okhttp3.Request
  *
  * You only need one instance (and you shouldn't get more).
  */
-class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Logging)
+class KubernetesClient(timeouts: KubernetesClientTimeoutConfig =
+  loadConfigOrThrow[KubernetesClientTimeoutConfig]("whisk.kubernetes.timeouts"))
+  (executionContext: ExecutionContext)(implicit log: Logging, as: ActorSystem)
     extends KubernetesApi
     with ProcessRunner {
   implicit private val ec = executionContext
@@ -97,7 +110,7 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
       "--limits",
       "memory=256Mi") ++ environmentArgs ++ labelArgs
 
-    runCmd(runArgs: _*)
+    runCmd(runArgs, timeouts.run)
       .map { _ =>
         name
       }
@@ -107,7 +120,7 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
   def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerAddress] = {
     Future {
       blocking {
-        val pod = kubeRestClient.pods().withName(id.asString).waitUntilReady(30, SECONDS)
+        val pod = kubeRestClient.pods().withName(id.asString).waitUntilReady(timeouts.inspect.length, timeouts.inspect.unit)
         ContainerAddress(pod.getStatus().getPodIP())
       }
     }.recoverWith {
@@ -118,10 +131,10 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
   }
 
   def rm(id: ContainerId)(implicit transid: TransactionId): Future[Unit] =
-    runCmd("delete", "--now", "pod", id.asString).map(_ => ())
+    runCmd(Seq("delete", "--now", "pod", id.asString), timeouts.rm).map(_ => ())
 
   def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit] =
-    runCmd("delete", "--now", "pod", "-l", s"$key=$value").map(_ => ())
+    runCmd(Seq("delete", "--now", "pod", "-l", s"$key=$value"), timeouts.rm).map(_ => ())
 
   def logs(id: ContainerId, sinceTime: String)(implicit transid: TransactionId): Source[ByteString, Any] = {
 
@@ -141,6 +154,8 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
             id.asString,
             "log?timestamps=true" ++ sinceTimePart))
         val request = new Request.Builder().get().url(url).build
+
+        // TODO figure out how to use timeouts.logs
         val response = kubeRestClient.getHttpClient.newCall(request).execute
         if (!response.isSuccessful) {
           Future.failed(
@@ -177,10 +192,13 @@ class KubernetesClient()(executionContext: ExecutionContext)(implicit log: Loggi
     })
   }
 
-  private def runCmd(args: String*)(implicit transid: TransactionId): Future[String] = {
+  private def runCmd(args: Seq[String], timeout: Duration)(implicit transid: TransactionId): Future[String] = {
     val cmd = kubectlCmd ++ args
-    val start = transid.started(this, LoggingMarkers.INVOKER_KUBECTL_CMD(args.head), s"running ${cmd.mkString(" ")}")
-    executeProcess(cmd: _*).andThen {
+    val start = transid.started(
+      this,
+      LoggingMarkers.INVOKER_KUBECTL_CMD(args.head),
+      s"running ${cmd.mkString(" ")} (timeout: $timeout)")
+    executeProcess(cmd, timeout).andThen {
       case Success(_) => transid.finished(this, start)
       case Failure(t) => transid.failed(this, start, t.getMessage, ErrorLevel)
     }

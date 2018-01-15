@@ -33,7 +33,8 @@ import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity.InstanceId
 import whisk.core.WhiskConfig
 
-class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ec: ExecutionContext, logging: Logging)
+class KubernetesContainerFactory(label: String, config: WhiskConfig)
+  (implicit actorSystem: ActorSystem, ec: ExecutionContext, logging: Logging)
     extends ContainerFactory {
 
   implicit val kubernetes = new KubernetesClient()(ec)
@@ -74,5 +75,5 @@ object KubernetesContainerFactoryProvider extends ContainerFactoryProvider {
                                    config: WhiskConfig,
                                    instance: InstanceId,
                                    parameters: Map[String, Set[String]]): ContainerFactory =
-    new KubernetesContainerFactory(s"invoker${instance.toInt}", config)(actorSystem.dispatcher, logging)
+    new KubernetesContainerFactory(s"invoker${instance.toInt}", config)(actorSystem, actorSystem.dispatcher, logging)
 }
