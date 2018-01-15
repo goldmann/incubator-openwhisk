@@ -41,6 +41,7 @@ import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
 
+import io.fabric8.kubernetes.client.ConfigBuilder
 import spray.json._
 import spray.json.DefaultJsonProtocol._
 import io.fabric8.kubernetes.client.DefaultKubernetesClient
@@ -66,7 +67,11 @@ class KubernetesClient(
     extends KubernetesApi
     with ProcessRunner {
   implicit private val ec = executionContext
-  implicit private val kubeRestClient = new DefaultKubernetesClient
+  implicit private val kubeRestClient = new DefaultKubernetesClient(
+    new ConfigBuilder()
+      .withConnectionTimeout(timeouts.logs.toMillis.toInt)
+      .withRequestTimeout(timeouts.logs.toMillis.toInt)
+      .build())
 
   // Determines how to run kubectl. Failure to find a kubectl binary implies
   // a failure to initialize this instance of KubernetesClient.
@@ -153,7 +158,6 @@ class KubernetesClient(
             "log?timestamps=true" ++ sinceTimePart))
         val request = new Request.Builder().get().url(url).build
 
-        // TODO figure out how to use timeouts.logs
         val response = kubeRestClient.getHttpClient.newCall(request).execute
         if (!response.isSuccessful) {
           Future.failed(
