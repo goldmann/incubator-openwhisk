@@ -32,7 +32,6 @@ import whisk.common.TransactionId
 import whisk.core.containerpool.ContainerId
 import whisk.core.containerpool.ContainerAddress
 import whisk.core.containerpool.docker.ProcessRunner
-
 import scala.concurrent.duration.Duration
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -41,6 +40,7 @@ import scala.concurrent.duration._
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
+
 import spray.json._
 import spray.json.DefaultJsonProtocol._
 import io.fabric8.kubernetes.client.DefaultKubernetesClient
@@ -50,10 +50,7 @@ import okhttp3.Request
 /**
  * Configuration for kubernetes client command timeouts.
  */
-case class KubernetesClientTimeoutConfig(run: Duration,
-                                         rm: Duration,
-                                         inspect: Duration,
-                                         logs: Duration)
+case class KubernetesClientTimeoutConfig(run: Duration, rm: Duration, inspect: Duration, logs: Duration)
 
 /**
  * Serves as interface to the kubectl CLI tool.
@@ -63,9 +60,9 @@ case class KubernetesClientTimeoutConfig(run: Duration,
  *
  * You only need one instance (and you shouldn't get more).
  */
-class KubernetesClient(timeouts: KubernetesClientTimeoutConfig =
-  loadConfigOrThrow[KubernetesClientTimeoutConfig]("whisk.kubernetes.timeouts"))
-  (executionContext: ExecutionContext)(implicit log: Logging, as: ActorSystem)
+class KubernetesClient(
+  timeouts: KubernetesClientTimeoutConfig = loadConfigOrThrow[KubernetesClientTimeoutConfig](
+    "whisk.kubernetes.timeouts"))(executionContext: ExecutionContext)(implicit log: Logging, as: ActorSystem)
     extends KubernetesApi
     with ProcessRunner {
   implicit private val ec = executionContext
@@ -120,7 +117,8 @@ class KubernetesClient(timeouts: KubernetesClientTimeoutConfig =
   def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerAddress] = {
     Future {
       blocking {
-        val pod = kubeRestClient.pods().withName(id.asString).waitUntilReady(timeouts.inspect.length, timeouts.inspect.unit)
+        val pod =
+          kubeRestClient.pods().withName(id.asString).waitUntilReady(timeouts.inspect.length, timeouts.inspect.unit)
         ContainerAddress(pod.getStatus().getPodIP())
       }
     }.recoverWith {
