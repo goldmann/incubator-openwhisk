@@ -37,7 +37,7 @@ import akka.stream.scaladsl.{Framing, Source}
 import akka.stream.stage._
 import akka.util.ByteString
 import spray.json._
-import whisk.core.containerpool.logging.{LogLine => CoreLogLine}
+import whisk.core.containerpool.logging.LogLine
 import whisk.http.Messages
 
 object DockerContainer {
@@ -250,12 +250,12 @@ class DockerContainer(protected val id: ContainerId,
         case _: StreamLimitReachedException =>
           // While the stream has already ended by failing the limitWeighted stage above, we inject a truncation
           // notice downstream, which will be processed as usual. This will be the last element of the stream.
-          ByteString(CoreLogLine(Instant.now.toString, "stderr", Messages.truncateLogs(limit)).toJson.compactPrint)
+          ByteString(LogLine(Instant.now.toString, "stderr", Messages.truncateLogs(limit)).toJson.compactPrint)
         case _: OccurrencesNotFoundException | _: FramingException =>
           // Stream has already ended and we insert a notice that data might be missing from the logs. While a
           // FramingException can also mean exceeding the limits, we cannot decide which case happened so we resort
           // to the general error message. This will be the last element of the stream.
-          ByteString(CoreLogLine(Instant.now.toString, "stderr", Messages.logFailure).toJson.compactPrint)
+          ByteString(LogLine(Instant.now.toString, "stderr", Messages.logFailure).toJson.compactPrint)
       }
       .takeWithin(waitForLogs)
   }

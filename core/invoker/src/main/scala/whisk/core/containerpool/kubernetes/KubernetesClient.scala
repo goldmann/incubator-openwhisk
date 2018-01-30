@@ -23,7 +23,7 @@ import java.nio.file.Files
 import java.nio.file.Paths
 
 import akka.actor.ActorSystem
-import akka.event.Logging.ErrorLevel
+import akka.event.Logging.{ErrorLevel, InfoLevel}
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import pureconfig.loadConfigOrThrow
@@ -114,10 +114,7 @@ class KubernetesClient(
       "memory=256Mi") ++ environmentArgs ++ labelArgs
 
     runCmd(runArgs, timeouts.run)
-      .map { _ =>
-        name
-      }
-      .map(ContainerId.apply)
+      .map(_ => ContainerId(name))
   }
 
   def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerAddress] = {
@@ -200,7 +197,8 @@ class KubernetesClient(
     val start = transid.started(
       this,
       LoggingMarkers.INVOKER_KUBECTL_CMD(args.head),
-      s"running ${cmd.mkString(" ")} (timeout: $timeout)")
+      s"running ${cmd.mkString(" ")} (timeout: $timeout)",
+      logLevel = InfoLevel)
     executeProcess(cmd, timeout).andThen {
       case Success(_) => transid.finished(this, start)
       case Failure(t) => transid.failed(this, start, t.getMessage, ErrorLevel)
