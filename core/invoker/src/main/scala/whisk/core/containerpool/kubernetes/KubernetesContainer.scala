@@ -27,9 +27,7 @@ import akka.util.ByteString
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
-import scala.concurrent.duration._
 import spray.json._
-import spray.json.DefaultJsonProtocol._
 import whisk.common.Logging
 import whisk.common.TransactionId
 import whisk.core.containerpool.Container
@@ -97,10 +95,7 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
     extends Container {
 
   /** The last read timestamp in the log file */
-  private val lastTimestamp = new AtomicReference("")
-
-  protected val logsRetryCount = 15
-  protected val logsRetryWait = 100.millis
+  private val lastTimestamp = new AtomicReference[Option[String]](None)
 
   // no-op under Kubernetes
   def suspend()(implicit transid: TransactionId): Future[Unit] = Future.successful({})
@@ -117,20 +112,11 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
 
     val activationMarkerCheck: ByteString ⇒ Boolean = { bs ⇒
       if (bs.containsSlice(DockerContainer.ActivationSentinel)) {
-
-        val lastTS = bs.utf8String.lines.toSeq.lastOption
-          .getOrElse("""{"time":""}""")
-          .parseJson
-          .asJsObject
-          .fields("time")
-          .convertTo[String]
-
-        // not thrilled about the closure here, but it's against an atomic reference so should be safe
-        // longterm we should see if we can work w/ kubernetes logs without needing a last timestamp
-        lastTimestamp.set(lastTS)
-
+        lastTimestamp.set(Some(bs.utf8String.parseJson.convertTo[LogLine].time))
         true
-      } else false
+      } else {
+        false
+      }
     }
 
     kubernetes
