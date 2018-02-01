@@ -18,21 +18,25 @@
 package whisk.core.containerpool.kubernetes
 
 import java.io.FileNotFoundException
-import java.net.URL
 import java.nio.file.Files
 import java.nio.file.Paths
 
 import akka.actor.ActorSystem
 import akka.event.Logging.{ErrorLevel, InfoLevel}
+import akka.http.scaladsl.model.Uri
+import akka.http.scaladsl.model.Uri.Path
+import akka.http.scaladsl.model.Uri.Query
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import pureconfig.loadConfigOrThrow
 import whisk.common.Logging
 import whisk.common.LoggingMarkers
 import whisk.common.TransactionId
+import whisk.core.ConfigKeys
 import whisk.core.containerpool.ContainerId
 import whisk.core.containerpool.ContainerAddress
 import whisk.core.containerpool.docker.ProcessRunner
+import whisk.core.containerpool.logging.LogLine
 import scala.concurrent.duration.Duration
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -41,12 +45,10 @@ import scala.concurrent.duration._
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
+import spray.json._
 
 import io.fabric8.kubernetes.client.ConfigBuilder
-import spray.json._
-import spray.json.DefaultJsonProtocol._
 import io.fabric8.kubernetes.client.DefaultKubernetesClient
-import io.fabric8.kubernetes.client.utils.URLUtils
 import okhttp3.Request
 
 /**
@@ -64,7 +66,7 @@ case class KubernetesClientTimeoutConfig(run: Duration, rm: Duration, inspect: D
  */
 class KubernetesClient(
   timeouts: KubernetesClientTimeoutConfig = loadConfigOrThrow[KubernetesClientTimeoutConfig](
-    "whisk.kubernetes.timeouts"))(executionContext: ExecutionContext)(implicit log: Logging, as: ActorSystem)
+    ConfigKeys.kubernetesTimeouts))(executionContext: ExecutionContext)(implicit log: Logging, as: ActorSystem)
     extends KubernetesApi
     with ProcessRunner {
   implicit private val ec = executionContext
@@ -137,35 +139,31 @@ class KubernetesClient(
   def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit] =
     runCmd(Seq("delete", "--now", "pod", "-l", s"$key=$value"), timeouts.rm).map(_ => ())
 
-  def logs(id: ContainerId, sinceTime: String)(implicit transid: TransactionId): Source[ByteString, Any] = {
+  def logs(id: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
 
     Source.fromFuture(Future {
       blocking {
-        val sinceTimePart = if (!sinceTime.isEmpty) {
-          s"&sinceTime=${sinceTime}"
-        } else ""
-        val url = new URL(
-          URLUtils.join(
-            kubeRestClient.getMasterUrl.toString,
-            "api",
-            "v1",
-            "namespaces",
-            kubeRestClient.getNamespace,
-            "pods",
-            id.asString,
-            "log?timestamps=true" ++ sinceTimePart))
-        val request = new Request.Builder().get().url(url).build
+        val path = Path / "api" / "v1" / "namespaces" / kubeRestClient.getNamespace / "pods" / id.asString / "log"
+        val query = Seq("timestamps" -> true.toString) ++ sinceTime.map(time => "sinceTime" -> time)
+        val url = Uri(kubeRestClient.getMasterUrl.toString)
+          .withPath(path)
+          .withQuery(Query(query: _*))
 
+        val request = new Request.Builder().get().url(url.toString).build
         val response = kubeRestClient.getHttpClient.newCall(request).execute
-        if (!response.isSuccessful) {
+        if (response.isSuccessful) {
+          Future.successful(response.body.string)
+        } else {
           Future.failed(
             new Exception(s"Kubernetes API returned HTTP status ${response.code} when trying to retrieve pod logs"))
         }
-        response.body.string
       }
-    }.map { output =>
+    }.flatMap(identity).map { output =>
+      // The k8s logs api has less granularity than the timestamp
+      // we're passing as the 'sinceTime' argument, so we may need to
+      // filter logs from previous activations on a warm runtime pod
       val original = output.lines.toSeq
-      val relevant = original.dropWhile(s => !s.startsWith(sinceTime))
+      val relevant = original.dropWhile(s => !s.startsWith(sinceTime.getOrElse("")))
       val result =
         if (!relevant.isEmpty && original.size > relevant.size) {
           // drop matching timestamp from previous activation
@@ -173,19 +171,18 @@ class KubernetesClient(
         } else {
           original
         }
+
       // map the logs to the docker json file format expected by
       // ActionLogDriver.processJsonDriverLogContents
-      // TODO - jcrossley - you'll probably want to clean up / reimplement the logic intended by this with the new format
-      //var sentinelSeen = false
       ByteString(
         result
           .map { line =>
             val pos = line.indexOf(" ")
             val ts = line.substring(0, pos)
             val msg = line.substring(pos + 1)
-            // TODO - can we get the proper stream name from kubernetes? Some stuff is stderr
+            // TODO - when we can distinguish stderr: https://github.com/kubernetes/kubernetes/issues/28167
             val stream = "stdout"
-            JsObject("log" -> msg.toJson, "stream" -> stream.toJson, "time" -> ts.toJson)
+            LogLine(ts, stream, msg).toJson.compactPrint
           }
           .mkString("\n") + "\n" // trailing newline is necessary or the frame won't be decoded and break the akka stream
       )
@@ -216,5 +213,6 @@ trait KubernetesApi {
 
   def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit]
 
-  def logs(containerId: ContainerId, sinceTime: String)(implicit transid: TransactionId): Source[ByteString, Any]
+  def logs(containerId: ContainerId, sinceTime: Option[String])(
+    implicit transid: TransactionId): Source[ByteString, Any]
 }
