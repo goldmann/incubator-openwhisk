@@ -470,7 +470,6 @@ class KubernetesContainerTests
       LogLine(Instant.EPOCH.plusMillis(2L).toString, "stdout", "This is the first line in second log.\n")
     val secondLogSecondEntry =
       LogLine(Instant.EPOCH.plusMillis(3L).toString, "stdout", "This is the second line in second log.\n")
-    val secondLogLimit = 4
 
     val thirdLogFirstEntry =
       LogLine(Instant.EPOCH.plusMillis(4L).toString, "stdout", "This is the first line in third log.\n")
@@ -489,8 +488,8 @@ class KubernetesContainerTests
     }
 
     val container = kubernetesContainer()()
-    val processedFirstLog =  awaitLogs(container.logs(limit = firstLogFirstEntry.log.sizeInBytes, waitForSentinel = true))
-    val processedSecondLog = awaitLogs(container.logs(limit = secondLogFirstEntry.log.take(secondLogLimit).sizeInBytes, waitForSentinel = false))
+    val processedFirstLog =  awaitLogs(container.logs(limit = (firstRawLog.length - 1).bytes, waitForSentinel = false))
+    val processedSecondLog = awaitLogs(container.logs(limit = (secondRawLog.length - 1).bytes, waitForSentinel = false))
     val processedThirdLog =  awaitLogs(container.logs(limit = 1.MB, waitForSentinel = true))
 
     kubernetes.logCalls should have size 3
