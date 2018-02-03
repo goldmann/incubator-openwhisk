@@ -27,6 +27,7 @@ import akka.util.ByteString
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
+import scala.concurrent.duration._
 import spray.json._
 import whisk.common.Logging
 import whisk.common.TransactionId
@@ -97,6 +98,8 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
   /** The last read timestamp in the log file */
   private val lastTimestamp = new AtomicReference[Option[String]](None)
 
+  protected val waitForLogs: FiniteDuration = 2.seconds
+
   // no-op under Kubernetes
   def suspend()(implicit transid: TransactionId): Future[Unit] = Future.successful({})
 
@@ -128,16 +131,13 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
           // While the stream has already ended by failing the limitWeighted stage above, we inject a truncation
           // notice downstream, which will be processed as usual. This will be the last element of the stream.
           ByteString(LogLine(Instant.now.toString, "stderr", Messages.truncateLogs(limit)).toJson.compactPrint)
-        case _: FramingException =>
-          ByteString(
-            LogLine(Instant.now.toString, "stderr", "Framing Exception in Kubernetes Container Logs.").toJson.compactPrint)
-        case _: OccurrencesNotFoundException =>
+        case _: OccurrencesNotFoundException | _: FramingException =>
           // Stream has already ended and we insert a notice that data might be missing from the logs. While a
           // FramingException can also mean exceeding the limits, we cannot decide which case happened so we resort
           // to the general error message. This will be the last element of the stream.
           ByteString(LogLine(Instant.now.toString, "stderr", Messages.logFailure).toJson.compactPrint)
       }
-
+      .takeWithin(waitForLogs)
   }
 
   /** Delimiter used to split log-lines as written by the json-log-driver. */
