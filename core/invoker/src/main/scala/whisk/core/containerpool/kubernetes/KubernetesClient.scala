@@ -78,44 +78,20 @@ class KubernetesClient(
 
   // Determines how to run kubectl. Failure to find a kubectl binary implies
   // a failure to initialize this instance of KubernetesClient.
-  protected val kubectlCmd: Seq[String] = {
+  protected def findKubectlCmd(): String = {
     val alternatives = List("/usr/bin/kubectl", "/usr/local/bin/kubectl")
-
     val kubectlBin = Try {
       alternatives.find(a => Files.isExecutable(Paths.get(a))).get
     } getOrElse {
       throw new FileNotFoundException(s"Couldn't locate kubectl binary (tried: ${alternatives.mkString(", ")}).")
     }
-
-    Seq(kubectlBin)
+    kubectlBin
   }
+  protected val kubectlCmd = Seq(findKubectlCmd)
 
-  def run(image: String, name: String, environment: Map[String, String] = Map(), labels: Map[String, String] = Map())(
+  def run(name: String, image: String, args: Seq[String] = Seq.empty[String])(
     implicit transid: TransactionId): Future[ContainerId] = {
-    val environmentArgs = environment.flatMap {
-      case (key, value) => Seq("--env", s"$key=$value")
-    }.toSeq
-
-    val labelArgs = labels.map {
-      case (key, value) => s"$key=$value"
-    } match {
-      case Seq() => Seq()
-      case pairs => Seq("-l") ++ pairs
-    }
-
-    val runArgs = Seq(
-      "run",
-      name,
-      "--image",
-      image,
-      "--generator",
-      "run-pod/v1",
-      "--restart",
-      "Always",
-      "--limits",
-      "memory=256Mi") ++ environmentArgs ++ labelArgs
-
-    runCmd(runArgs, timeouts.run)
+    runCmd(Seq("run", name, s"--image=$image") ++ args, timeouts.run)
       .map(_ => ContainerId(name))
   }
 
@@ -174,18 +150,14 @@ class KubernetesClient(
 
       // map the logs to the docker json file format expected by
       // ActionLogDriver.processJsonDriverLogContents
-      ByteString(
-        result
-          .map { line =>
-            val pos = line.indexOf(" ")
-            val ts = line.substring(0, pos)
-            val msg = line.substring(pos + 1)
-            // TODO - when we can distinguish stderr: https://github.com/kubernetes/kubernetes/issues/28167
-            val stream = "stdout"
-            LogLine(ts, stream, msg).toJson.compactPrint
-          }
-          .mkString("\n") + "\n" // trailing newline is necessary or the frame won't be decoded and break the akka stream
-      )
+      ByteString(result.map { line =>
+        val pos = line.indexOf(" ")
+        val ts = line.substring(0, pos)
+        val msg = line.substring(pos + 1)
+        // TODO - when we can distinguish stderr: https://github.com/kubernetes/kubernetes/issues/28167
+        val stream = "stdout"
+        LogLine(ts, stream, msg).toJson.compactPrint + "\n"
+      }.mkString)
     })
   }
 
@@ -204,7 +176,7 @@ class KubernetesClient(
 }
 
 trait KubernetesApi {
-  def run(image: String, name: String, environment: Map[String, String] = Map(), labels: Map[String, String] = Map())(
+  def run(name: String, image: String, args: Seq[String] = Seq.empty[String])(
     implicit transid: TransactionId): Future[ContainerId]
 
   def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerAddress]

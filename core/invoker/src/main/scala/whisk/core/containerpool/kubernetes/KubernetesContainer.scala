@@ -27,6 +27,7 @@ import akka.util.ByteString
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
+import scala.concurrent.duration._
 import spray.json._
 import whisk.common.Logging
 import whisk.common.TransactionId
@@ -37,6 +38,7 @@ import whisk.core.containerpool.ContainerAddress
 import whisk.core.containerpool.docker.{CompleteAfterOccurrences, DockerContainer, OccurrencesNotFoundException}
 import whisk.core.containerpool.logging.LogLine
 import whisk.core.entity.ByteSize
+import whisk.core.entity.size._
 import whisk.http.Messages
 
 object KubernetesContainer {
@@ -53,18 +55,40 @@ object KubernetesContainer {
    * @return a Future which either completes with a KubernetesContainer or one of two specific failures
    */
   def create(transid: TransactionId,
+             name: String,
              image: String,
              userProvidedImage: Boolean = false,
+             memory: ByteSize = 256.MB,
              environment: Map[String, String] = Map(),
-             labels: Map[String, String] = Map(),
-             name: Option[String] = None)(implicit kubernetes: KubernetesApi,
-                                          ec: ExecutionContext,
-                                          log: Logging): Future[KubernetesContainer] = {
+             labels: Map[String, String] = Map())
+    (implicit kubernetes: KubernetesApi,
+      ec: ExecutionContext,
+      log: Logging): Future[KubernetesContainer] = {
     implicit val tid = transid
 
-    val podName = name.getOrElse("").replace("_", "-").replaceAll("[()]", "").toLowerCase()
+    val podName = name.replace("_", "-").replaceAll("[()]", "").toLowerCase()
+
+    val environmentArgs = environment.flatMap {
+      case (key, value) => Seq("--env", s"$key=$value")
+    }.toSeq
+
+    val labelArgs = labels.map {
+      case (key, value) => s"$key=$value"
+    } match {
+      case Seq() => Seq()
+      case pairs => Seq("-l") ++ pairs
+    }
+
+    val args = Seq(
+      "--generator",
+      "run-pod/v1",
+      "--restart",
+      "Always",
+      "--limits",
+      s"memory=${memory.toMB}Mi") ++ environmentArgs ++ labelArgs
+
     for {
-      id <- kubernetes.run(image, podName, environment, labels).recoverWith {
+      id <- kubernetes.run(podName, image, args).recoverWith {
         case _ => Future.failed(WhiskContainerStartupError(s"Failed to run container with image '${image}'."))
       }
       ip <- kubernetes.inspectIPAddress(id).recoverWith {
@@ -97,6 +121,8 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
   /** The last read timestamp in the log file */
   private val lastTimestamp = new AtomicReference[Option[String]](None)
 
+  protected val waitForLogs: FiniteDuration = 2.seconds
+
   // no-op under Kubernetes
   def suspend()(implicit transid: TransactionId): Future[Unit] = Future.successful({})
 
@@ -111,33 +137,27 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
   def logs(limit: ByteSize, waitForSentinel: Boolean)(implicit transid: TransactionId): Source[ByteString, Any] = {
 
     val activationMarkerCheck: ByteString ⇒ Boolean = { bs ⇒
-      if (bs.containsSlice(DockerContainer.ActivationSentinel)) {
-        lastTimestamp.set(Some(bs.utf8String.parseJson.convertTo[LogLine].time))
-        true
-      } else {
-        false
-      }
+      lastTimestamp.set(Some(bs.utf8String.parseJson.convertTo[LogLine].time))
+      bs.containsSlice(DockerContainer.ActivationSentinel)
     }
 
     kubernetes
       .logs(id, lastTimestamp.get()) // todo - same sentinel check behavior as DockerContainer should be implemented?
       .via(Framing.delimiter(delimiter, limit.toBytes.toInt))
+      // .limitWeighted(limit.toBytes) { obj => obj.size + 1 }
       .via(new CompleteAfterOccurrences(activationMarkerCheck, 2, waitForSentinel))
       .recover {
         case _: StreamLimitReachedException =>
           // While the stream has already ended by failing the limitWeighted stage above, we inject a truncation
           // notice downstream, which will be processed as usual. This will be the last element of the stream.
           ByteString(LogLine(Instant.now.toString, "stderr", Messages.truncateLogs(limit)).toJson.compactPrint)
-        case _: FramingException =>
-          ByteString(
-            LogLine(Instant.now.toString, "stderr", "Framing Exception in Kubernetes Container Logs.").toJson.compactPrint)
-        case _: OccurrencesNotFoundException =>
+        case _: OccurrencesNotFoundException | _: FramingException =>
           // Stream has already ended and we insert a notice that data might be missing from the logs. While a
           // FramingException can also mean exceeding the limits, we cannot decide which case happened so we resort
           // to the general error message. This will be the last element of the stream.
           ByteString(LogLine(Instant.now.toString, "stderr", Messages.logFailure).toJson.compactPrint)
       }
-
+      .takeWithin(waitForLogs)
   }
 
   /** Delimiter used to split log-lines as written by the json-log-driver. */
