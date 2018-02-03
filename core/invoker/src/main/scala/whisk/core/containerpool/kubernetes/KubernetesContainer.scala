@@ -114,17 +114,14 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
   def logs(limit: ByteSize, waitForSentinel: Boolean)(implicit transid: TransactionId): Source[ByteString, Any] = {
 
     val activationMarkerCheck: ByteString ⇒ Boolean = { bs ⇒
-      if (bs.containsSlice(DockerContainer.ActivationSentinel)) {
-        lastTimestamp.set(Some(bs.utf8String.parseJson.convertTo[LogLine].time))
-        true
-      } else {
-        false
-      }
+      lastTimestamp.set(Some(bs.utf8String.parseJson.convertTo[LogLine].time))
+      bs.containsSlice(DockerContainer.ActivationSentinel)
     }
 
     kubernetes
       .logs(id, lastTimestamp.get()) // todo - same sentinel check behavior as DockerContainer should be implemented?
       .via(Framing.delimiter(delimiter, limit.toBytes.toInt))
+      // .limitWeighted(limit.toBytes) { obj => obj.size + 1 }
       .via(new CompleteAfterOccurrences(activationMarkerCheck, 2, waitForSentinel))
       .recover {
         case _: StreamLimitReachedException =>
