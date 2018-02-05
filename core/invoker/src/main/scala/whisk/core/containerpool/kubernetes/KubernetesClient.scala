@@ -78,17 +78,16 @@ class KubernetesClient(
 
   // Determines how to run kubectl. Failure to find a kubectl binary implies
   // a failure to initialize this instance of KubernetesClient.
-  protected val kubectlCmd: Seq[String] = {
+  protected def findKubectlCmd(): String = {
     val alternatives = List("/usr/bin/kubectl", "/usr/local/bin/kubectl")
-
     val kubectlBin = Try {
       alternatives.find(a => Files.isExecutable(Paths.get(a))).get
     } getOrElse {
       throw new FileNotFoundException(s"Couldn't locate kubectl binary (tried: ${alternatives.mkString(", ")}).")
     }
-
-    Seq(kubectlBin)
+    kubectlBin
   }
+  protected val kubectlCmd = Seq(findKubectlCmd)
 
   def run(image: String, name: String, environment: Map[String, String] = Map(), labels: Map[String, String] = Map())(
     implicit transid: TransactionId): Future[ContainerId] = {
