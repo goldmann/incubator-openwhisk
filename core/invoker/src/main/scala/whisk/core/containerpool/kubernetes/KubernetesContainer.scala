@@ -89,14 +89,14 @@ object KubernetesContainer {
 
     for {
       id <- kubernetes.run(podName, image, args).recoverWith {
-        case _ => Future.failed(WhiskContainerStartupError(s"Failed to run container with image '${image}'."))
+        case _ => Future.failed(WhiskContainerStartupError(Messages.resourceProvisionError))
       }
       ip <- kubernetes.inspectIPAddress(id).recoverWith {
         // remove the container immediately if inspect failed as
         // we cannot recover that case automatically
         case _ =>
           kubernetes.rm(id)
-          Future.failed(WhiskContainerStartupError(s"Failed to obtain IP address of container '${id.asString}'."))
+          Future.failed(WhiskContainerStartupError(Messages.resourceProvisionError))
       }
     } yield new KubernetesContainer(id, ip)
   }
