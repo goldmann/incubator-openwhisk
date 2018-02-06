@@ -51,7 +51,7 @@ import whisk.core.entity.ActivationResponse.Timeout
 import whisk.core.entity.size._
 import whisk.http.Messages
 
-import whisk.core.entity.size._
+import whisk.core.containerpool.docker.test.DockerContainerTests._
 
 /**
  * Unit tests for ContainerPool schedule
@@ -71,9 +71,6 @@ class KubernetesContainerTests
   }
 
   implicit val materializer: ActorMaterializer = ActorMaterializer()
-
-  /** Awaits the given future, throws the exception enclosed in Failure. */
-  def await[A](f: Future[A], timeout: FiniteDuration = 500.milliseconds) = Await.result[A](f, timeout)
 
   /** Reads logs into memory and awaits them */
   def awaitLogs(source: Source[ByteString, Any], timeout: FiniteDuration = 500.milliseconds): Vector[String] =
@@ -100,9 +97,6 @@ class KubernetesContainerTests
       }
     }
   }
-
-  /** Creates an interval starting at EPOCH with the given duration. */
-  def intervalOf(duration: FiniteDuration) = Interval(Instant.EPOCH, Instant.ofEpochMilli(duration.toMillis))
 
   behavior of "KubernetesContainer"
 
@@ -329,18 +323,6 @@ class KubernetesContainerTests
   /*
    * LOGS
    */
-  def toRawLog(log: Seq[LogLine], appendSentinel: Boolean = true): ByteString = {
-    val appendedLog = if (appendSentinel) {
-      val lastTime = log.lastOption.map { case LogLine(time, _, _) => time }.getOrElse(Instant.EPOCH.toString)
-      log :+
-        LogLine(lastTime, "stderr", s"${DockerContainer.ActivationSentinel.utf8String}\n") :+
-        LogLine(lastTime, "stdout", s"${DockerContainer.ActivationSentinel.utf8String}\n")
-    } else {
-      log
-    }
-    ByteString(appendedLog.map(_.toJson.compactPrint).mkString("", "\n", "\n"))
-  }
-
   it should "read a simple log with sentinel" in {
     val expectedLogEntry = LogLine(Instant.EPOCH.toString, "stdout", "This is a log entry.\n")
     val rawLog = toRawLog(Seq(expectedLogEntry), appendSentinel = true)
