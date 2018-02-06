@@ -60,10 +60,9 @@ object KubernetesContainer {
              userProvidedImage: Boolean = false,
              memory: ByteSize = 256.MB,
              environment: Map[String, String] = Map(),
-             labels: Map[String, String] = Map())
-    (implicit kubernetes: KubernetesApi,
-      ec: ExecutionContext,
-      log: Logging): Future[KubernetesContainer] = {
+             labels: Map[String, String] = Map())(implicit kubernetes: KubernetesApi,
+                                                  ec: ExecutionContext,
+                                                  log: Logging): Future[KubernetesContainer] = {
     implicit val tid = transid
 
     val podName = name.replace("_", "-").replaceAll("[()]", "").toLowerCase()
@@ -79,13 +78,7 @@ object KubernetesContainer {
       case pairs => Seq("-l") ++ pairs
     }
 
-    val args = Seq(
-      "--generator",
-      "run-pod/v1",
-      "--restart",
-      "Always",
-      "--limits",
-      s"memory=${memory.toMB}Mi") ++ environmentArgs ++ labelArgs
+    val args = Seq("--generator", "run-pod/v1", "--restart", "Always", "--limits", s"memory=${memory.toMB}Mi") ++ environmentArgs ++ labelArgs
 
     for {
       id <- kubernetes.run(podName, image, args).recoverWith {

@@ -140,17 +140,24 @@ class KubernetesContainerTests
     val (testName, testImage, testArgs) = kubernetes.runs.head
     testName shouldBe "my-container1"
     testImage shouldBe image
-    testArgs shouldBe Seq("--generator", "run-pod/v1", "--restart", "Always", "--limits", "memory=256Mi", "--env", "test=hi", "-l", "invoker=0")
+    testArgs shouldBe Seq(
+      "--generator",
+      "run-pod/v1",
+      "--restart",
+      "Always",
+      "--limits",
+      "memory=256Mi",
+      "--env",
+      "test=hi",
+      "-l",
+      "invoker=0")
   }
 
   it should "pull a user provided image before creating the container" in {
     implicit val kubernetes = new TestKubernetesClient
 
-    val container = KubernetesContainer.create(
-      transid = transid,
-      name = "name",
-      image = "image",
-      userProvidedImage = true)
+    val container =
+      KubernetesContainer.create(transid = transid, name = "name", image = "image", userProvidedImage = true)
     await(container)
 
     kubernetes.runs should have size 1
@@ -176,18 +183,15 @@ class KubernetesContainerTests
 
   it should "provide a proper error if run fails for blackbox containers" in {
     implicit val kubernetes = new TestKubernetesClient {
-      override def run(name: String, image: String, args: Seq[String])
-        (implicit transid: TransactionId): Future[ContainerId] = {
+      override def run(name: String, image: String, args: Seq[String])(
+        implicit transid: TransactionId): Future[ContainerId] = {
         runs += ((name, image, args))
         Future.failed(ProcessRunningException(1, "", ""))
       }
     }
 
-    val container = KubernetesContainer.create(
-      transid = transid,
-      name = "name",
-      image = "image",
-      userProvidedImage = true)
+    val container =
+      KubernetesContainer.create(transid = transid, name = "name", image = "image", userProvidedImage = true)
     a[WhiskContainerStartupError] should be thrownBy await(container)
 
     kubernetes.runs should have size 1
@@ -203,11 +207,8 @@ class KubernetesContainerTests
       }
     }
 
-    val container = KubernetesContainer.create(
-      transid = transid,
-      name = "name",
-      image = "image",
-      userProvidedImage = true)
+    val container =
+      KubernetesContainer.create(transid = transid, name = "name", image = "image", userProvidedImage = true)
     a[WhiskContainerStartupError] should be thrownBy await(container)
 
     kubernetes.runs should have size 1
@@ -345,7 +346,8 @@ class KubernetesContainerTests
     val rawLog = toRawLog(Seq(expectedLogEntry), appendSentinel = true)
 
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(id: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(id: ContainerId,
+                        sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((id, sinceTime))
         Source.single(rawLog)
       }
@@ -369,7 +371,8 @@ class KubernetesContainerTests
     val rawLog = toRawLog(Seq(expectedLogEntry), appendSentinel = false)
 
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(id: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(id: ContainerId,
+                        sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((id, sinceTime))
         Source.single(rawLog)
       }
@@ -390,7 +393,8 @@ class KubernetesContainerTests
 
   it should "fail log reading if error occurs during file reading" in {
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(id: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(id: ContainerId,
+                        sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((containerId, sinceTime))
         Source.failed(new IOException)
       }
@@ -413,7 +417,8 @@ class KubernetesContainerTests
     val returnValues = mutable.Queue(firstRawLog, secondRawLog)
 
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(id: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(id: ContainerId,
+                        sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((id, sinceTime))
         Source.single(returnValues.dequeue())
       }
@@ -442,7 +447,8 @@ class KubernetesContainerTests
     val rawLog = toRawLog(expectedLog, appendSentinel = false)
 
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(containerId: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(containerId: ContainerId,
+                        sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((containerId, sinceTime))
         // "Fakes" an infinite source with only 1 entry
         Source.tick(0.milliseconds, 10.seconds, rawLog)
@@ -484,16 +490,17 @@ class KubernetesContainerTests
     val returnValues = mutable.Queue(firstRawLog, secondRawLog, thirdRawLog)
 
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(containerId: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(containerId: ContainerId,
+                        sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((containerId, sinceTime))
         Source.single(returnValues.dequeue())
       }
     }
 
     val container = kubernetesContainer()()
-    val processedFirstLog =  awaitLogs(container.logs(limit = (firstRawLog.length - 1).bytes, waitForSentinel = false))
+    val processedFirstLog = awaitLogs(container.logs(limit = (firstRawLog.length - 1).bytes, waitForSentinel = false))
     val processedSecondLog = awaitLogs(container.logs(limit = (secondRawLog.length - 1).bytes, waitForSentinel = false))
-    val processedThirdLog =  awaitLogs(container.logs(limit = 1.MB, waitForSentinel = true))
+    val processedThirdLog = awaitLogs(container.logs(limit = 1.MB, waitForSentinel = true))
 
     kubernetes.logCalls should have size 3
     val (_, sinceTime1) = kubernetes.logCalls(0)
@@ -522,7 +529,8 @@ class KubernetesContainerTests
     val rawLog = toRawLog(Seq(expectedLogEntry, expectedLogEntry), appendSentinel = false).dropRight(10)
 
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(containerId: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(containerId: ContainerId,
+                        sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((containerId, sinceTime))
         Source.single(rawLog)
       }
@@ -547,7 +555,8 @@ class KubernetesContainerTests
     val rawLog = toRawLog(Seq(expectedLogEntry, expectedLogEntry), appendSentinel = false)
 
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(containerId: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(containerId: ContainerId,
+                        sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((containerId, sinceTime))
         Source.single(rawLog)
       }
@@ -578,7 +587,8 @@ class KubernetesContainerTests
     val rawLog = toRawLog(Seq(expectedLogEntry), appendSentinel = true)
 
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(containerId: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(containerId: ContainerId,
+                        sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((containerId, sinceTime))
         Source.single(rawLog)
       }
