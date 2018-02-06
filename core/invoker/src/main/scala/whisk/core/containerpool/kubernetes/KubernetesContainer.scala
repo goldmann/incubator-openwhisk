@@ -119,7 +119,7 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
     }
 
     kubernetes
-      .logs(id, lastTimestamp.get()) // todo - same sentinel check behavior as DockerContainer should be implemented?
+      .logs(id, lastTimestamp.get(), waitForSentinel) // todo - same sentinel check behavior as DockerContainer should be implemented?
       .via(Framing.delimiter(delimiter, limit.toBytes.toInt))
       // .limitWeighted(limit.toBytes) { obj => obj.size + 1 }
       .via(new CompleteAfterOccurrences(activationMarkerCheck, 2, waitForSentinel))

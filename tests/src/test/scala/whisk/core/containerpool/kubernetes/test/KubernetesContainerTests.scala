@@ -343,7 +343,7 @@ class KubernetesContainerTests
     val rawLog = toRawLog(Seq(expectedLogEntry), appendSentinel = true)
 
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(id: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(id: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean = false)(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((id, sinceTime))
         Source.single(rawLog)
       }
@@ -367,7 +367,7 @@ class KubernetesContainerTests
     val rawLog = toRawLog(Seq(expectedLogEntry), appendSentinel = false)
 
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(id: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(id: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean = false)(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((id, sinceTime))
         Source.single(rawLog)
       }
@@ -388,7 +388,7 @@ class KubernetesContainerTests
 
   it should "fail log reading if error occurs during file reading" in {
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(id: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(id: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean = false)(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((containerId, sinceTime))
         Source.failed(new IOException)
       }
@@ -411,7 +411,7 @@ class KubernetesContainerTests
     val returnValues = mutable.Queue(firstRawLog, secondRawLog)
 
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(id: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(id: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean = false)(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((id, sinceTime))
         Source.single(returnValues.dequeue())
       }
@@ -440,7 +440,7 @@ class KubernetesContainerTests
     val rawLog = toRawLog(expectedLog, appendSentinel = false)
 
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(containerId: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(containerId: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean = false)(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((containerId, sinceTime))
         // "Fakes" an infinite source with only 1 entry
         Source.tick(0.milliseconds, 10.seconds, rawLog)
@@ -481,7 +481,7 @@ class KubernetesContainerTests
     val returnValues = mutable.Queue(firstRawLog, secondRawLog, thirdRawLog)
 
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(containerId: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(containerId: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean = false)(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((containerId, sinceTime))
         Source.single(returnValues.dequeue())
       }
@@ -519,7 +519,7 @@ class KubernetesContainerTests
     val rawLog = toRawLog(Seq(expectedLogEntry, expectedLogEntry), appendSentinel = false).dropRight(10)
 
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(containerId: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(containerId: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean = false)(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((containerId, sinceTime))
         Source.single(rawLog)
       }
@@ -544,7 +544,7 @@ class KubernetesContainerTests
     val rawLog = toRawLog(Seq(expectedLogEntry, expectedLogEntry), appendSentinel = false)
 
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(containerId: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(containerId: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean = false)(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((containerId, sinceTime))
         Source.single(rawLog)
       }
@@ -575,7 +575,7 @@ class KubernetesContainerTests
     val rawLog = toRawLog(Seq(expectedLogEntry), appendSentinel = true)
 
     implicit val kubernetes = new TestKubernetesClient {
-      override def logs(containerId: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+      override def logs(containerId: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean = false)(implicit transid: TransactionId): Source[ByteString, Any] = {
         logCalls += ((containerId, sinceTime))
         Source.single(rawLog)
       }
@@ -618,7 +618,7 @@ class KubernetesContainerTests
       rmByLabels += ((key, value))
       Future.successful(())
     }
-    def logs(id: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+    def logs(id: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean)(implicit transid: TransactionId): Source[ByteString, Any] = {
       logCalls += ((id, sinceTime))
       Source.single(ByteString.empty)
     }

@@ -138,25 +138,11 @@ class KubernetesClient(
   def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit] =
     runCmd(Seq("delete", "--now", "pod", "-l", s"$key=$value"), timeouts.rm).map(_ => ())
 
-  def logs(id: ContainerId, sinceTime: Option[String])(implicit transid: TransactionId): Source[ByteString, Any] = {
+  def logs(id: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean = false)(
+    implicit transid: TransactionId): Source[ByteString, Any] = {
 
     Source.fromFuture(Future {
-      blocking {
-        val path = Path / "api" / "v1" / "namespaces" / kubeRestClient.getNamespace / "pods" / id.asString / "log"
-        val query = Seq("timestamps" -> true.toString) ++ sinceTime.map(time => "sinceTime" -> time)
-        val url = Uri(kubeRestClient.getMasterUrl.toString)
-          .withPath(path)
-          .withQuery(Query(query: _*))
-
-        val request = new Request.Builder().get().url(url.toString).build
-        val response = kubeRestClient.getHttpClient.newCall(request).execute
-        if (response.isSuccessful) {
-          Future.successful(response.body.string)
-        } else {
-          Future.failed(
-            new Exception(s"Kubernetes API returned HTTP status ${response.code} when trying to retrieve pod logs"))
-        }
-      }
+      fetchHTTPLogs(id, sinceTime, waitForSentinel)
     }.flatMap(identity).map { output =>
       // The k8s logs api has less granularity than the timestamp
       // we're passing as the 'sinceTime' argument, so we may need to
@@ -188,6 +174,31 @@ class KubernetesClient(
     })
   }
 
+  protected def fetchHTTPLogs(id: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean) = {
+    val path = Path / "api" / "v1" / "namespaces" / kubeRestClient.getNamespace / "pods" / id.asString / "log"
+    val qB = Map.newBuilder[String, String]
+    qB += "timestamps" → "true"
+    qB ++= sinceTime.map("sinceTime" → _)
+    if (waitForSentinel) qB += "follow" → "true"
+
+    val query = Query(qB.result())
+
+    log.info(this, "Fetching K8S HTTP Logs w/ Query: " + query)
+
+    val url = Uri(kubeRestClient.getMasterUrl.toString)
+      .withPath(path)
+      .withQuery(query)
+
+    val request = new Request.Builder().get().url(url.toString).build
+    val response = kubeRestClient.getHttpClient.newCall(request).execute
+    if (response.isSuccessful) {
+      Future.successful(response.body.string)
+    } else {
+      Future.failed(
+        new Exception(s"Kubernetes API returned HTTP status ${response.code} when trying to retrieve pod logs"))
+    }
+  }
+
   private def runCmd(args: Seq[String], timeout: Duration)(implicit transid: TransactionId): Future[String] = {
     val cmd = kubectlCmd ++ args
     val start = transid.started(
@@ -212,6 +223,6 @@ trait KubernetesApi {
 
   def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit]
 
-  def logs(containerId: ContainerId, sinceTime: Option[String])(
+  def logs(containerId: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean = false)(
     implicit transid: TransactionId): Source[ByteString, Any]
 }
