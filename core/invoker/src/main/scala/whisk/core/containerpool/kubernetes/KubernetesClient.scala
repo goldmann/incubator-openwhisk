@@ -17,7 +17,7 @@
 
 package whisk.core.containerpool.kubernetes
 
-import java.io.FileNotFoundException
+import java.io.{FileNotFoundException, IOException}
 import java.nio.file.Files
 import java.nio.file.Paths
 
@@ -26,7 +26,9 @@ import akka.event.Logging.{ErrorLevel, InfoLevel}
 import akka.http.scaladsl.model.Uri
 import akka.http.scaladsl.model.Uri.Path
 import akka.http.scaladsl.model.Uri.Query
+import akka.stream.{Attributes, Outlet, SourceShape}
 import akka.stream.scaladsl.Source
+import akka.stream.stage._
 import akka.util.ByteString
 import pureconfig.loadConfigOrThrow
 import whisk.common.Logging
@@ -37,6 +39,7 @@ import whisk.core.containerpool.ContainerId
 import whisk.core.containerpool.ContainerAddress
 import whisk.core.containerpool.docker.ProcessRunner
 import whisk.core.containerpool.logging.LogLine
+
 import scala.concurrent.duration.Duration
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -46,10 +49,12 @@ import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
 import spray.json._
-
 import io.fabric8.kubernetes.client.ConfigBuilder
 import io.fabric8.kubernetes.client.DefaultKubernetesClient
-import okhttp3.Request
+import okhttp3.{Call, Callback, Request, Response}
+
+import scala.collection.mutable
+import scala.util.control.NonFatal
 
 /**
  * Configuration for kubernetes client command timeouts.
@@ -225,4 +230,105 @@ trait KubernetesApi {
 
   def logs(containerId: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean = false)(
     implicit transid: TransactionId): Source[ByteString, Any]
+}
+
+final class KubernetesRestLogSourceStage(id: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean)(
+  implicit val kubeRestClient: DefaultKubernetesClient)
+    extends GraphStage[SourceShape[ByteString]] {
+  stage =>
+  val out = Outlet[ByteString]("K8SHttpLogging.out")
+
+  override val shape: SourceShape[ByteString] = SourceShape.of(out)
+
+  override protected def initialAttributes: Attributes = Attributes.name("KubernetesHttpLogSource")
+
+  override def createLogic(inheritedAttributes: Attributes): GraphStageLogic =
+    new GraphStageLogicWithLogging(shape) {
+      logic =>
+
+      private val queue = mutable.Queue.empty[LogLine]
+
+      final override def preStart(): Unit =
+        try {
+          val path = Path / "api" / "v1" / "namespaces" / kubeRestClient.getNamespace / "pods" / id.asString / "log"
+          val qB = Map.newBuilder[String, String]
+          qB += "timestamps" → "true"
+          qB ++= sinceTime.map("sinceTime" → _)
+          if (waitForSentinel) qB += "follow" → "true"
+
+          val query = Query(qB.result())
+
+          log.info("Fetching K8S HTTP Logs w/ Query: " + query)
+
+          val url = Uri(kubeRestClient.getMasterUrl.toString)
+            .withPath(path)
+            .withQuery(query)
+
+          val request = new Request.Builder().get().url(url.toString).build
+
+          kubeRestClient.getHttpClient.newCall(request).enqueue(new LogFetchCallback())
+        } catch {
+          case NonFatal(e) =>
+            onFailure(e)
+            throw e
+        }
+
+      def onFailure(e: Throwable): Unit = ???
+
+      val emitCallback: AsyncCallback[LogLine] = getAsyncCallback[LogLine] { line =>
+        if (isAvailable(out)) {
+          pushLine(line)
+        } else {
+          queue.enqueue(line)
+        }
+      }
+
+      class LogFetchCallback extends Callback {
+
+        override def onFailure(call: Call, e: IOException): Unit = logic.onFailure(e)
+
+        override def onResponse(call: Call, response: Response): Unit =
+          try {
+            log.info("Received call response: %s", response)
+            val src = response.body.source
+
+            // todo - right now this exhausts the initial return and exits; for sentinel "mode" we need to keep going… (needs figuring out)
+            while (!src.exhausted) { // todo - FIXME this is not the best idiomatic way to do this but for the life of me can't remember the better approach
+              val line: Option[LogLine] = for {
+                l <- Option(src.readUtf8Line()) if !l.isEmpty
+                st <- sinceTime if l.startsWith(st)
+                p = l.indexOf(" ")
+                ts = l.substring(0, p)
+                msg = l.substring(p + 1)
+              } yield
+                LogLine(ts, "stdout", msg) // TODO - when we can distinguish stderr: https://github.com/kubernetes/kubernetes/issues/28167
+
+              for (l <- line) emitCallback.invoke(l)
+            }
+
+            src.close()
+
+          } catch {
+            case NonFatal(e) =>
+              logic.onFailure(e)
+              throw e
+          }
+      }
+
+      def pushLine(line: LogLine): Unit = {
+        val json = line.toJson.compactPrint
+        log.info("Pushing a line of JSON for kubernetes logging: %s", json)
+        push(out, ByteString(json))
+      }
+
+      setHandler(
+        out,
+        new OutHandler {
+          override def onPull(): Unit = if (queue.nonEmpty) pushLine(queue.dequeue())
+
+          override def onDownstreamFinish(): Unit =
+            setKeepGoing(waitForSentinel) // todo - this is where we should probably be dealing w/ the "follow" mode of sentinel; double check
+          super.onDownstreamFinish()
+        })
+    }
 }
