@@ -95,7 +95,8 @@ class KubernetesClientTests
 
     val image = "image"
     val name = "name"
-    val expected = Seq(name, "--image", image, "--generator", "run-pod/v1", "--restart", "Always", "--limits", "memory=256Mi")
+    val expected =
+      Seq(name, "--image", image, "--generator", "run-pod/v1", "--restart", "Always", "--limits", "memory=256Mi")
     runAndVerify(dc.run(image, name), "run", expected) shouldBe ContainerId(name)
   }
 
