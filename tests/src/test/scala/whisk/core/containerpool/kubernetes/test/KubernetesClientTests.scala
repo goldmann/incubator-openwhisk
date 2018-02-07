@@ -18,12 +18,16 @@
 package whisk.core.containerpool.kubernetes.test
 
 import akka.actor.ActorSystem
+import akka.stream.ActorMaterializer
+import akka.stream.scaladsl.{Flow, Framing, Sink, Source}
+import akka.util.ByteString
 
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.concurrent.duration._
+import spray.json._
 import org.junit.runner.RunWith
 import org.scalatest.BeforeAndAfterEach
 import org.scalatest.concurrent.Eventually
@@ -38,7 +42,7 @@ import whisk.common.TransactionId
 import whisk.core.containerpool.ContainerId
 import whisk.core.containerpool.kubernetes.KubernetesClient
 import whisk.core.containerpool.docker.ProcessRunningException
-
+import whisk.core.containerpool.logging.LogLine
 @RunWith(classOf[JUnitRunner])
 class KubernetesClientTests
     extends FlatSpec
@@ -47,6 +51,19 @@ class KubernetesClientTests
     with BeforeAndAfterEach
     with Eventually
     with WskActorSystem {
+
+  implicit val materializer: ActorMaterializer = ActorMaterializer()
+
+  /** Reads logs into memory and awaits them */
+  def awaitLogs(source: Source[ByteString, Any], timeout: FiniteDuration = 1000.milliseconds): Vector[LogLine] =
+    Await
+      .result(
+        source
+          .via(Framing.delimiter(ByteString("\n"), 1024))
+          .via(Flow[ByteString].map(_.utf8String.parseJson.convertTo[LogLine]))
+          .runWith(Sink.seq[LogLine]),
+        timeout)
+      .toVector
 
   override def beforeEach = stream.reset()
 
@@ -60,11 +77,13 @@ class KubernetesClientTests
 
   val kubectlCommand = "kubectl"
 
-  /** Returns a KubernetesClient with a mocked result for 'executeProcess' */
-  def kubernetesClient(execResult: => Future[String]) = new KubernetesClient()(global) {
+  /** Returns a KubernetesClient with a mocked result for 'executeProcess' and 'fetchHTTPLogs' */
+  def kubernetesClient(fixture: => Future[String]) = new KubernetesClient()(global) {
     override def findKubectlCmd() = kubectlCommand
     override def executeProcess(args: Seq[String], timeout: Duration)(implicit ec: ExecutionContext, as: ActorSystem) =
-      execResult
+      fixture
+    override def fetchHTTPLogs(id: ContainerId, sinceTime: Option[String]) =
+      fixture
   }
 
   behavior of "KubernetesClient"
@@ -73,7 +92,7 @@ class KubernetesClientTests
     // a dummy string works here as we do not assert any output
     // from the methods below
     val stdout = "stdout"
-    val dc = kubernetesClient { Future.successful(stdout) }
+    val client = kubernetesClient { Future.successful(stdout) }
 
     /** Awaits the command and checks for proper logging. */
     def runAndVerify(f: Future[_], cmd: String, args: Seq[String]) = {
@@ -91,16 +110,16 @@ class KubernetesClientTests
       result
     }
 
-    runAndVerify(dc.rm(id), "delete", Seq("--now", "pod", id.asString))
+    runAndVerify(client.rm(id), "delete", Seq("--now", "pod", id.asString))
 
     val image = "image"
     val name = "name"
     val expected = Seq(name, s"--image=$image")
-    runAndVerify(dc.run(name, image), "run", expected) shouldBe ContainerId(name)
+    runAndVerify(client.run(name, image), "run", expected) shouldBe ContainerId(name)
   }
 
   it should "write proper log markers on a failing command" in {
-    val dc = kubernetesClient { Future.failed(new RuntimeException()) }
+    val client = kubernetesClient { Future.failed(new RuntimeException()) }
 
     /** Awaits the command, asserts the exception and checks for proper logging. */
     def runAndVerify(f: Future[_], cmd: String) = {
@@ -115,15 +134,15 @@ class KubernetesClientTests
       stream.reset()
     }
 
-    runAndVerify(dc.rm(id), "delete")
-    runAndVerify(dc.run("name", "image"), "run")
+    runAndVerify(client.rm(id), "delete")
+    runAndVerify(client.run("name", "image"), "run")
   }
 
   it should "fail with ProcessRunningException when run returns with exit code !=125 or no container ID" in {
     def runAndVerify(pre: ProcessRunningException, clue: String) = {
-      val dc = kubernetesClient { Future.failed(pre) }
+      val client = kubernetesClient { Future.failed(pre) }
       withClue(s"${clue} - exitCode = ${pre.exitCode}, stdout = '${pre.stdout}', stderr = '${pre.stderr}': ") {
-        the[ProcessRunningException] thrownBy await(dc.run("name", "image")) shouldBe pre
+        the[ProcessRunningException] thrownBy await(client.run("name", "image")) shouldBe pre
       }
     }
 
@@ -134,4 +153,38 @@ class KubernetesClientTests
       case (pre, clue) => runAndVerify(pre, clue)
     }
   }
+
+  val firstLog = """2018-02-06T00:00:18.419889342Z first activation
+                   |2018-02-06T00:00:18.419929471Z XXX_THE_END_OF_A_WHISK_ACTIVATION_XXX
+                   |2018-02-06T00:00:18.419988733Z XXX_THE_END_OF_A_WHISK_ACTIVATION_XXX
+                   |""".stripMargin
+  val secondLog = """2018-02-06T00:09:35.38267193Z second activation
+                    |2018-02-06T00:09:35.382990278Z XXX_THE_END_OF_A_WHISK_ACTIVATION_XXX
+                    |2018-02-06T00:09:35.383116503Z XXX_THE_END_OF_A_WHISK_ACTIVATION_XXX
+                    |""".stripMargin
+
+  it should "return all logs when no sinceTime passed" in {
+    val client = kubernetesClient { Future.successful(firstLog) }
+    val logs = awaitLogs(client.logs(id, None))
+    logs should have size 3
+    logs(0) shouldBe LogLine("2018-02-06T00:00:18.419889342Z", "stdout", "first activation")
+    logs(2) shouldBe LogLine("2018-02-06T00:00:18.419988733Z", "stdout", "XXX_THE_END_OF_A_WHISK_ACTIVATION_XXX")
+  }
+
+  it should "return all logs after the one matching sinceTime" in {
+    val client = kubernetesClient { Future.successful(firstLog + secondLog) }
+    val logs = awaitLogs(client.logs(id, Some("2018-02-06T00:00:18.419988733Z")))
+    logs should have size 3
+    logs(0) shouldBe LogLine("2018-02-06T00:09:35.38267193Z", "stdout", "second activation")
+    logs(2) shouldBe LogLine("2018-02-06T00:09:35.383116503Z", "stdout", "XXX_THE_END_OF_A_WHISK_ACTIVATION_XXX")
+  }
+
+  it should "return all logs if none match sinceTime" in {
+    val client = kubernetesClient { Future.successful(secondLog) }
+    val logs = awaitLogs(client.logs(id, Some("2018-02-06T00:00:18.419988733Z")))
+    logs should have size 3
+    logs(0) shouldBe LogLine("2018-02-06T00:09:35.38267193Z", "stdout", "second activation")
+    logs(2) shouldBe LogLine("2018-02-06T00:09:35.383116503Z", "stdout", "XXX_THE_END_OF_A_WHISK_ACTIVATION_XXX")
+  }
+
 }
