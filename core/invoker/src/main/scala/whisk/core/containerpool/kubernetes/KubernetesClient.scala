@@ -120,19 +120,24 @@ class KubernetesClient(
     Source.fromFuture(Future {
       fetchHTTPLogs(id, sinceTime)
     }.flatMap(identity).map { output =>
-      // The k8s logs api has less granularity than the timestamp
-      // we're passing as the 'sinceTime' argument, so we may need to
-      // filter logs from previous activations on a warm runtime pod
+      // The k8s logs api currently has less granularity than the
+      // timestamp we're passing as the 'sinceTime' argument, so we
+      // may need to filter logs from previous activations on a warm
+      // runtime pod
       val original = output.lines.toSeq
-      val relevant = original.dropWhile(s => !s.startsWith(sinceTime.getOrElse("")))
-      val result =
-        if (!relevant.isEmpty && original.size > relevant.size) {
-          // drop matching timestamp from previous activation
-          relevant.drop(1)
-        } else {
-          original
-        }
-
+      val result = sinceTime match {
+        // cold pod, just take the log output
+        case None => original
+        // there was an activation already on this pod
+        case Some(time) =>
+          val filtered = original.dropWhile(!_.startsWith(time))
+          // filtered can be empty iff the previous timestamp is not
+          // in the collection, which could happen if the granularity
+          // of the API ever matches that of the timestamp. Take the
+          // original output in that case. If nonEmpty, its head will
+          // contain the last line of the previous activation.
+          if (filtered.nonEmpty) filtered.drop(1) else original
+      }
       // map the logs to the docker json file format expected by
       // ActionLogDriver.processJsonDriverLogContents
       ByteString(result.map { line =>
