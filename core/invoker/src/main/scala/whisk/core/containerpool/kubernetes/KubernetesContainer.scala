@@ -120,6 +120,7 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
 
     kubernetes
       .logs(id, lastTimestamp.get(), waitForSentinel) // todo - same sentinel check behavior as DockerContainer should be implemented?
+      .limit(limit.toBytes)
       .via(new CompleteAfterOccurrences(activationMarkerCheck, 2, waitForSentinel))
       .recover {
         case _: StreamLimitReachedException =>
@@ -135,6 +136,4 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
       .takeWithin(waitForLogs)
   }
 
-  /** Delimiter used to split log-lines as written by the json-log-driver. */
-  private val delimiter = ByteString("\n")
 }
