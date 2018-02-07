@@ -18,6 +18,7 @@
 package whisk.core.containerpool.kubernetes
 
 import java.io.{FileNotFoundException, IOException}
+import java.net.SocketTimeoutException
 import java.nio.file.Files
 import java.nio.file.Paths
 
@@ -146,7 +147,11 @@ class KubernetesClient(
   def logs(id: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean = false)(
     implicit transid: TransactionId): Source[ByteString, Any] = {
 
-    Source.fromGraph(new KubernetesRestLogSourceStage(id, sinceTime, waitForSentinel))
+    log.debug(this, "Parsing logs from Kubernetes Graph Stage…")
+
+    Source
+      .fromGraph(new KubernetesRestLogSourceStage(id, sinceTime, waitForSentinel))
+
   }
 
   protected def fetchHTTPLogs(id: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean) = {
@@ -158,7 +163,7 @@ class KubernetesClient(
 
     val query = Query(qB.result())
 
-    log.info(this, "Fetching K8S HTTP Logs w/ Query: " + query)
+    log.debug(this, "Fetching K8S HTTP Logs w/ Query: " + query)
 
     val url = Uri(kubeRestClient.getMasterUrl.toString)
       .withPath(path)
@@ -228,7 +233,7 @@ final class KubernetesRestLogSourceStage(id: ContainerId, sinceTime: Option[Stri
 
           val query = Query(qB.result())
 
-          log.info("Fetching K8S HTTP Logs w/ Query: " + query)
+          log.debug("Fetching K8S HTTP Logs w/ Query: {}", query)
 
           val url = Uri(kubeRestClient.getMasterUrl.toString)
             .withPath(path)
@@ -243,7 +248,12 @@ final class KubernetesRestLogSourceStage(id: ContainerId, sinceTime: Option[Stri
             throw e
         }
 
-      def onFailure(e: Throwable): Unit = ???
+      def onFailure(e: Throwable): Unit = e match {
+        case _: SocketTimeoutException =>
+          log.warning("Logging socket to Kubernetes timed out. Likely not an error.")
+        case _ =>
+          log.error(e, "Retrieving the logs from Kubernetes failed.")
+      }
 
       val emitCallback: AsyncCallback[LogLine] = getAsyncCallback[LogLine] { line =>
         if (isAvailable(out)) {
@@ -259,19 +269,32 @@ final class KubernetesRestLogSourceStage(id: ContainerId, sinceTime: Option[Stri
 
         override def onResponse(call: Call, response: Response): Unit =
           try {
-            log.info("Received call response: %s", response)
             val src = response.body.source
+
+            // we need to drop any "old" log lines, i.e. any before the sinceTime variable
+            // it might be better longterm to instantiate the since Time as a date, timestamp, or milliseconds
+            // for quick less than / greater than compare
+            var foundRelevant = false
 
             // todo - right now this exhausts the initial return and exits; for sentinel "mode" we need to keep going… (needs figuring out)
             while (!src.exhausted) { // todo - FIXME this is not the best idiomatic way to do this but for the life of me can't remember the better approach
               val line: Option[LogLine] = for {
                 l <- Option(src.readUtf8Line()) if !l.isEmpty
-                st <- sinceTime if l.startsWith(st)
+                _ = log.debug("* Raw line of k8s log: {} (sinceTime: {})", l, sinceTime)
+                st <- sinceTime.orElse(Some("")) if l.startsWith(st) || foundRelevant // todo - fix me to be less janky
+                _ = log.debug("* sinceTime: {}", st)
                 p = l.indexOf(" ")
+                _ = log.debug("* first space pos: {}", p)
                 ts = l.substring(0, p)
+                _ = log.debug("* log line timestamp: {}", ts)
                 msg = l.substring(p + 1)
-              } yield
+                _ = log.debug("* log message: {}", msg)
+              } yield {
+                foundRelevant = true
                 LogLine(ts, "stdout", msg) // TODO - when we can distinguish stderr: https://github.com/kubernetes/kubernetes/issues/28167
+              }
+
+              log.debug("Received and parsed a LogLine: {}", line)
 
               for (l <- line) emitCallback.invoke(l)
             }
@@ -287,7 +310,7 @@ final class KubernetesRestLogSourceStage(id: ContainerId, sinceTime: Option[Stri
 
       def pushLine(line: LogLine): Unit = {
         val json = line.toJson.compactPrint
-        log.info("Pushing a line of JSON for kubernetes logging: %s", json)
+        log.debug("Pushing a line of JSON for kubernetes logging: {}", json)
         push(out, ByteString(json))
       }
 

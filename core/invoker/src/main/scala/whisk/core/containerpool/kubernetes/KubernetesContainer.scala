@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 import akka.stream.StreamLimitReachedException
 import akka.stream.scaladsl.Framing.FramingException
-import akka.stream.scaladsl.{Framing, Source}
+import akka.stream.scaladsl.{Source}
 import akka.util.ByteString
 
 import scala.concurrent.ExecutionContext
@@ -120,8 +120,6 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
 
     kubernetes
       .logs(id, lastTimestamp.get(), waitForSentinel) // todo - same sentinel check behavior as DockerContainer should be implemented?
-      .via(Framing.delimiter(delimiter, limit.toBytes.toInt))
-      // .limitWeighted(limit.toBytes) { obj => obj.size + 1 }
       .via(new CompleteAfterOccurrences(activationMarkerCheck, 2, waitForSentinel))
       .recover {
         case _: StreamLimitReachedException =>
