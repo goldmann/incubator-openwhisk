@@ -40,7 +40,6 @@ import whisk.core.containerpool.ContainerId
 import whisk.core.containerpool.ContainerAddress
 import whisk.core.containerpool.docker.ProcessRunner
 import whisk.core.containerpool.logging.LogLine
-
 import scala.concurrent.duration.Duration
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -95,32 +94,9 @@ class KubernetesClient(
   }
   protected val kubectlCmd = Seq(findKubectlCmd)
 
-  def run(image: String, name: String, environment: Map[String, String] = Map(), labels: Map[String, String] = Map())(
+  def run(name: String, image: String, args: Seq[String] = Seq.empty[String])(
     implicit transid: TransactionId): Future[ContainerId] = {
-    val environmentArgs = environment.flatMap {
-      case (key, value) => Seq("--env", s"$key=$value")
-    }.toSeq
-
-    val labelArgs = labels.map {
-      case (key, value) => s"$key=$value"
-    } match {
-      case Seq() => Seq()
-      case pairs => Seq("-l") ++ pairs
-    }
-
-    val runArgs = Seq(
-      "run",
-      name,
-      "--image",
-      image,
-      "--generator",
-      "run-pod/v1",
-      "--restart",
-      "Always",
-      "--limits",
-      "memory=256Mi") ++ environmentArgs ++ labelArgs
-
-    runCmd(runArgs, timeouts.run)
+    runCmd(Seq("run", name, s"--image=$image") ++ args, timeouts.run)
       .map(_ => ContainerId(name))
   }
 
@@ -169,7 +145,7 @@ class KubernetesClient(
 }
 
 trait KubernetesApi {
-  def run(image: String, name: String, environment: Map[String, String] = Map(), labels: Map[String, String] = Map())(
+  def run(name: String, image: String, args: Seq[String] = Seq.empty[String])(
     implicit transid: TransactionId): Future[ContainerId]
 
   def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerAddress]

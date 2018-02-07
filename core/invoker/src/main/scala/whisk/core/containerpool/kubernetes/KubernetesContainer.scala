@@ -38,6 +38,7 @@ import whisk.core.containerpool.ContainerAddress
 import whisk.core.containerpool.docker.{CompleteAfterOccurrences, DockerContainer, OccurrencesNotFoundException}
 import whisk.core.containerpool.logging.LogLine
 import whisk.core.entity.ByteSize
+import whisk.core.entity.size._
 import whisk.http.Messages
 
 object KubernetesContainer {
@@ -54,26 +55,41 @@ object KubernetesContainer {
    * @return a Future which either completes with a KubernetesContainer or one of two specific failures
    */
   def create(transid: TransactionId,
+             name: String,
              image: String,
              userProvidedImage: Boolean = false,
+             memory: ByteSize = 256.MB,
              environment: Map[String, String] = Map(),
-             labels: Map[String, String] = Map(),
-             name: Option[String] = None)(implicit kubernetes: KubernetesApi,
-                                          ec: ExecutionContext,
-                                          log: Logging): Future[KubernetesContainer] = {
+             labels: Map[String, String] = Map())(implicit kubernetes: KubernetesApi,
+                                                  ec: ExecutionContext,
+                                                  log: Logging): Future[KubernetesContainer] = {
     implicit val tid = transid
 
-    val podName = name.getOrElse("").replace("_", "-").replaceAll("[()]", "").toLowerCase()
+    val podName = name.replace("_", "-").replaceAll("[()]", "").toLowerCase()
+
+    val environmentArgs = environment.flatMap {
+      case (key, value) => Seq("--env", s"$key=$value")
+    }.toSeq
+
+    val labelArgs = labels.map {
+      case (key, value) => s"$key=$value"
+    } match {
+      case Seq() => Seq()
+      case pairs => Seq("-l") ++ pairs
+    }
+
+    val args = Seq("--generator", "run-pod/v1", "--restart", "Always", "--limits", s"memory=${memory.toMB}Mi") ++ environmentArgs ++ labelArgs
+
     for {
-      id <- kubernetes.run(image, podName, environment, labels).recoverWith {
-        case _ => Future.failed(WhiskContainerStartupError(s"Failed to run container with image '${image}'."))
+      id <- kubernetes.run(podName, image, args).recoverWith {
+        case _ => Future.failed(WhiskContainerStartupError(Messages.resourceProvisionError))
       }
       ip <- kubernetes.inspectIPAddress(id).recoverWith {
         // remove the container immediately if inspect failed as
         // we cannot recover that case automatically
         case _ =>
           kubernetes.rm(id)
-          Future.failed(WhiskContainerStartupError(s"Failed to obtain IP address of container '${id.asString}'."))
+          Future.failed(WhiskContainerStartupError(Messages.resourceProvisionError))
       }
     } yield new KubernetesContainer(id, ip)
   }
@@ -119,7 +135,7 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
     }
 
     kubernetes
-      .logs(id, lastTimestamp.get(), waitForSentinel) // todo - same sentinel check behavior as DockerContainer should be implemented?
+      .logs(id, lastTimestamp.get(), waitForSentinel)
       .limit(limit.toBytes)
       .via(new CompleteAfterOccurrences(activationMarkerCheck, 2, waitForSentinel))
       .recover {

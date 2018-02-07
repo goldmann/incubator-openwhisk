@@ -63,11 +63,12 @@ class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ac
 
     KubernetesContainer.create(
       tid,
-      image = image,
-      userProvidedImage = userProvidedImage,
+      name,
+      image,
+      userProvidedImage,
+      memory,
       environment = Map("__OW_API_HOST" -> config.wskApiHost),
-      labels = Map("invoker" -> label),
-      name = Some(name))
+      labels = Map("invoker" -> label))
   }
 }
 

@@ -19,7 +19,7 @@ package whisk.core.loadBalancer
 
 import java.nio.charset.StandardCharsets
 
-import akka.actor.{ActorRefFactory, ActorSystem, Props}
+import akka.actor.{ActorSystem, Props}
 import akka.cluster.Cluster
 import akka.pattern.ask
 import akka.stream.ActorMaterializer
@@ -29,28 +29,26 @@ import pureconfig._
 import whisk.common.{Logging, LoggingMarkers, TransactionId}
 import whisk.core.WhiskConfig._
 import whisk.core.connector._
-import whisk.core.database.NoDocumentException
 import whisk.core.entity._
-import whisk.core.entity.types.EntityStore
 import whisk.core.{ConfigKeys, WhiskConfig}
 import whisk.spi.SpiLoader
+import akka.event.Logging.InfoLevel
+
+import pureconfig._
 
 import scala.annotation.tailrec
 import scala.concurrent.duration._
-import scala.concurrent.{Await, ExecutionContext, Future, Promise}
+import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.{Failure, Success}
 
 case class LoadbalancerConfig(blackboxFraction: Double, invokerBusyThreshold: Int)
 
-class ContainerPoolBalancer(config: WhiskConfig, instance: InstanceId)(implicit val actorSystem: ActorSystem,
-                                                                       logging: Logging,
-                                                                       materializer: ActorMaterializer)
+class ContainerPoolBalancer(config: WhiskConfig, controllerInstance: InstanceId)(implicit val actorSystem: ActorSystem,
+                                                                                 logging: Logging,
+                                                                                 materializer: ActorMaterializer)
     extends LoadBalancer {
 
   private val lbConfig = loadConfigOrThrow[LoadbalancerConfig](ConfigKeys.loadbalancer)
-
-  /** Used to manage an action for testing invoker health */ /** Used to manage an action for testing invoker health */
-  private val entityStore = WhiskEntityStore.datastore(config)
 
   /** The execution context for futures */
   private implicit val executionContext: ExecutionContext = actorSystem.dispatcher
@@ -157,6 +155,12 @@ class ContainerPoolBalancer(config: WhiskConfig, instance: InstanceId)(implicit 
           processCompletion(Left(activationId), transid, forced = true, invoker = invokerName)
         }
 
+        transid.mark(
+          this,
+          LoggingMarkers.LOADBALANCER_ACTIVATION_START(namespaceId.asString),
+          s"loadbalancer: activation started for namespace $namespaceId and activation $activationId",
+          logLevel = InfoLevel)
+
         // please note: timeoutHandler.cancel must be called on all non-timeout paths, e.g. Success
         ActivationEntry(
           activationId,
@@ -165,28 +169,6 @@ class ContainerPoolBalancer(config: WhiskConfig, instance: InstanceId)(implicit 
           timeoutHandler,
           Promise[Either[ActivationId, WhiskActivation]]())
       })
-  }
-
-  /**
-   * Creates or updates a health test action by updating the entity store.
-   * This method is intended for use on startup.
-   * @return Future that completes successfully iff the action is added to the database
-   */
-  private def createTestActionForInvokerHealth(db: EntityStore, action: WhiskAction): Future[Unit] = {
-    implicit val tid = TransactionId.loadbalancer
-    WhiskAction
-      .get(db, action.docid)
-      .flatMap { oldAction =>
-        WhiskAction.put(db, action.revision(oldAction.rev))(tid, notifier = None)
-      }
-      .recover {
-        case _: NoDocumentException => WhiskAction.put(db, action)(tid, notifier = None)
-      }
-      .map(_ => {})
-      .andThen {
-        case Success(_) => logging.info(this, "test action for invoker health now exists")
-        case Failure(e) => logging.error(this, s"error creating test action for invoker health: $e")
-      }
   }
 
   /** Gets a producer which can publish messages to the kafka bus. */
@@ -206,33 +188,23 @@ class ContainerPoolBalancer(config: WhiskConfig, instance: InstanceId)(implicit 
 
     producer.send(topic, msg).andThen {
       case Success(status) =>
-        transid.finished(this, start, s"posted to ${status.topic()}[${status.partition()}][${status.offset()}]")
+        transid.finished(
+          this,
+          start,
+          s"posted to ${status.topic()}[${status.partition()}][${status.offset()}]",
+          logLevel = InfoLevel)
       case Failure(e) => transid.failed(this, start, s"error on posting to topic $topic")
     }
   }
-  private val invokerPool = {
-    // Do not create the invokerPool if it is not possible to create the health test action to recover the invokers.
-    InvokerPool
-      .healthAction(instance)
-      .map {
-        // Await the creation of the test action; on failure, this will abort the constructor which should
-        // in turn abort the startup of the controller.
-        a =>
-          Await.result(createTestActionForInvokerHealth(entityStore, a), 1.minute)
-      }
-      .orElse {
-        throw new IllegalStateException(
-          "cannot create test action for invoker health because runtime manifest is not valid")
-      }
 
-    val maxPingsPerPoll = 128
-    val pingConsumer =
-      messagingProvider.getConsumer(config, s"health${instance.toInt}", "health", maxPeek = maxPingsPerPoll)
-    val invokerFactory = (f: ActorRefFactory, invokerInstance: InstanceId) =>
-      f.actorOf(InvokerActor.props(invokerInstance, instance))
+  private val invokerPool = {
+    InvokerPool.prepare(controllerInstance, WhiskEntityStore.datastore(config))
 
     actorSystem.actorOf(
-      InvokerPool.props(invokerFactory, (m, i) => sendActivationToInvoker(messageProducer, m, i), pingConsumer))
+      InvokerPool.props(
+        (f, i) => f.actorOf(InvokerActor.props(i, controllerInstance)),
+        (m, i) => sendActivationToInvoker(messageProducer, m, i),
+        messagingProvider.getConsumer(config, s"health${controllerInstance.toInt}", "health", maxPeek = 128)))
   }
 
   /**
@@ -242,7 +214,11 @@ class ContainerPoolBalancer(config: WhiskConfig, instance: InstanceId)(implicit 
   val maxActiveAcksPerPoll = 128
   val activeAckPollDuration = 1.second
   private val activeAckConsumer =
-    messagingProvider.getConsumer(config, "completions", s"completed${instance.toInt}", maxPeek = maxActiveAcksPerPoll)
+    messagingProvider.getConsumer(
+      config,
+      "completions",
+      s"completed${controllerInstance.toInt}",
+      maxPeek = maxActiveAcksPerPoll)
   val activationFeed = actorSystem.actorOf(Props {
     new MessageFeed(
       "activeack",
@@ -293,7 +269,7 @@ class ContainerPoolBalancer(config: WhiskConfig, instance: InstanceId)(implicit 
         val invokersToUse = if (action.exec.pull) blackboxInvokers(invokers) else managedInvokers(invokers)
         val invokersWithUsage = invokersToUse.view.map {
           // Using a view defers the comparably expensive lookup to actual access of the element
-          case invoker => (invoker.id, invoker.status, currentActivations.getOrElse(instance.toString, 0))
+          case invoker => (invoker.id, invoker.status, currentActivations.getOrElse(invoker.id.toString, 0))
         }
 
         ContainerPoolBalancer.schedule(invokersWithUsage, lbConfig.invokerBusyThreshold, hash) match {
