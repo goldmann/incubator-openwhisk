@@ -17,12 +17,12 @@
 
 package whisk.core.containerpool.kubernetes
 
-import java.time.Instant
+import java.time.{Instant, LocalDateTime}
 import java.util.concurrent.atomic.AtomicReference
 
 import akka.stream.StreamLimitReachedException
 import akka.stream.scaladsl.Framing.FramingException
-import akka.stream.scaladsl.{Source}
+import akka.stream.scaladsl.{Framing, Source}
 import akka.util.ByteString
 
 import scala.concurrent.ExecutionContext
@@ -40,6 +40,8 @@ import whisk.core.containerpool.logging.LogLine
 import whisk.core.entity.ByteSize
 import whisk.core.entity.size._
 import whisk.http.Messages
+
+import scala.util.Try
 
 object KubernetesContainer {
 
@@ -93,6 +95,7 @@ object KubernetesContainer {
       }
     } yield new KubernetesContainer(id, ip)
   }
+
 }
 
 /**
@@ -112,7 +115,7 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
     extends Container {
 
   /** The last read timestamp in the log file */
-  private val lastTimestamp = new AtomicReference[Option[String]](None)
+  private val lastTimestamp = new AtomicReference[Option[LocalDateTime]](None)
 
   protected val waitForLogs: FiniteDuration = 2.seconds
 
@@ -129,14 +132,25 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
 
   def logs(limit: ByteSize, waitForSentinel: Boolean)(implicit transid: TransactionId): Source[ByteString, Any] = {
 
+    import KubernetesClient.K8SDateTimeFormat
+
     val activationMarkerCheck: ByteString ⇒ Boolean = { bs ⇒
-      lastTimestamp.set(Some(bs.utf8String.parseJson.convertTo[LogLine].time))
-      bs.containsSlice(DockerContainer.ActivationSentinel)
+      val str = bs.utf8String
+      val parsed = str.parseJson.convertTo[LogLine]
+      // If this line is a sentinel line, remember the timestamp for lastTimestamp
+      if (bs.containsSlice(DockerContainer.ActivationSentinel)) {
+        Try(LocalDateTime.parse(parsed.time, K8SDateTimeFormat)).foreach(time => lastTimestamp.set(Option(time)))
+        true
+      } else false
     }
 
     kubernetes
-      .logs(id, lastTimestamp.get(), waitForSentinel)
-      .limit(limit.toBytes)
+      .logs(id, lastTimestamp.get, waitForSentinel)
+      .via(Framing.delimiter(delimiter, limit.toBytes.toInt))
+      .limitWeighted(limit.toBytes) { obj =>
+        // Adding + 1 since we know there's a newline byte being read
+        obj.size + 1
+      }
       .via(new CompleteAfterOccurrences(activationMarkerCheck, 2, waitForSentinel))
       .recover {
         case _: StreamLimitReachedException =>
@@ -152,4 +166,6 @@ class KubernetesContainer(protected val id: ContainerId, protected val addr: Con
       .takeWithin(waitForLogs)
   }
 
+  /** Delimiter used to split log-lines as written by the json-log-driver. */
+  private val delimiter = ByteString("\n")
 }

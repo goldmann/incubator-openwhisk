@@ -21,6 +21,8 @@ import java.io.{FileNotFoundException, IOException}
 import java.net.SocketTimeoutException
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatterBuilder
 
 import akka.actor.ActorSystem
 import akka.event.Logging.{ErrorLevel, InfoLevel}
@@ -39,7 +41,7 @@ import whisk.core.ConfigKeys
 import whisk.core.containerpool.ContainerId
 import whisk.core.containerpool.ContainerAddress
 import whisk.core.containerpool.docker.ProcessRunner
-import whisk.core.containerpool.logging.LogLine
+
 import scala.concurrent.duration.Duration
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -49,10 +51,13 @@ import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
 import spray.json._
+import spray.json.DefaultJsonProtocol._
 import io.fabric8.kubernetes.client.ConfigBuilder
 import io.fabric8.kubernetes.client.DefaultKubernetesClient
 import okhttp3.{Call, Callback, Request, Response}
+import okio.BufferedSource
 
+import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
@@ -120,13 +125,14 @@ class KubernetesClient(
   def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit] =
     runCmd(Seq("delete", "--now", "pod", "-l", s"$key=$value"), timeouts.rm).map(_ => ())
 
-  def logs(id: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean = false)(
+  def logs(id: ContainerId, sinceTime: Option[LocalDateTime], waitForSentinel: Boolean = false)(
     implicit transid: TransactionId): Source[ByteString, Any] = {
 
     log.debug(this, "Parsing logs from Kubernetes Graph Stage…")
 
     Source
       .fromGraph(new KubernetesRestLogSourceStage(id, sinceTime, waitForSentinel))
+      .log("foobar")
 
   }
 
@@ -144,6 +150,19 @@ class KubernetesClient(
   }
 }
 
+object KubernetesClient {
+
+  //%Y-%m-%dT%H:%M:%S.%N%z
+  val K8SDateTimeFormat = new DateTimeFormatterBuilder()
+    .parseCaseInsensitive()
+    .appendPattern("u-MM-dd")
+    .appendLiteral('T')
+    .appendPattern("HH:mm:ss[.n]")
+    .appendLiteral('Z')
+    .toFormatter()
+
+}
+
 trait KubernetesApi {
   def run(name: String, image: String, args: Seq[String] = Seq.empty[String])(
     implicit transid: TransactionId): Future[ContainerId]
@@ -154,14 +173,72 @@ trait KubernetesApi {
 
   def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit]
 
-  def logs(containerId: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean = false)(
+  def logs(containerId: ContainerId, sinceTime: Option[LocalDateTime], waitForSentinel: Boolean = false)(
     implicit transid: TransactionId): Source[ByteString, Any]
 }
 
-final class KubernetesRestLogSourceStage(id: ContainerId, sinceTime: Option[String], waitForSentinel: Boolean)(
+object KubernetesRestLogSourceStage {
+
+  import KubernetesClient.K8SDateTimeFormat
+
+  def constructPath(namespace: String, containerId: String): Path =
+    Path / "api" / "v1" / "namespaces" / namespace / "pods" / containerId / "log"
+
+  def constructQuery(sinceTime: Option[LocalDateTime], waitForSentinel: Boolean): Query = {
+
+    val qB = Map.newBuilder[String, String]
+    qB += "timestamps" → "true"
+    qB ++= sinceTime.map(time => "sinceTime" -> time.format(KubernetesClient.K8SDateTimeFormat))
+
+    Query(qB.result())
+  }
+
+  @tailrec
+  def readLines(src: BufferedSource,
+                lastTimestamp: Option[LocalDateTime],
+                lines: Seq[JsObject] = Seq.empty[JsObject]): (Option[LocalDateTime], Seq[JsObject]) = {
+
+    if (!src.exhausted()) {
+      (for {
+        l <- Option(src.readUtf8Line()) if !l.isEmpty
+        p = l.indexOf(" ")
+        // Kubernetes is ignoring nanoseconds in sinceTime, so we have to filter additionally here
+        ts = l.substring(0, p)
+        tsDate <- Try(LocalDateTime.parse(ts, K8SDateTimeFormat)).toOption if isRelevantLogLine(lastTimestamp, tsDate)
+        msg = l.substring(p + 1)
+        stream = "stdout" // TODO - when we can distinguish stderr: https://github.com/kubernetes/kubernetes/issues/28167
+      } yield {
+        tsDate -> JsObject("log" -> msg.toJson, "stream" -> stream.toJson, "time" -> ts.toJson)
+      }) match {
+        case Some((latestTS, js)) =>
+          readLines(src, Some(latestTS), lines :+ js)
+        case None =>
+          // we may have skipped a line for filtering conditions only; keep going
+          readLines(src, lastTimestamp, lines)
+      }
+    } else {
+      src.close()
+      (lastTimestamp, lines)
+    }
+
+  }
+
+  def isRelevantLogLine(lastTimestamp: Option[LocalDateTime], newTimestamp: LocalDateTime): Boolean =
+    lastTimestamp match {
+      case Some(last) =>
+        newTimestamp.isAfter(last)
+      case None =>
+        true
+    }
+
+}
+
+final class KubernetesRestLogSourceStage(id: ContainerId, sinceTime: Option[LocalDateTime], waitForSentinel: Boolean)(
   implicit val kubeRestClient: DefaultKubernetesClient)
-    extends GraphStage[SourceShape[ByteString]] {
-  stage =>
+    extends GraphStage[SourceShape[ByteString]] { stage =>
+
+  import KubernetesRestLogSourceStage._
+
   val out = Outlet[ByteString]("K8SHttpLogging.out")
 
   override val shape: SourceShape[ByteString] = SourceShape.of(out)
@@ -169,22 +246,17 @@ final class KubernetesRestLogSourceStage(id: ContainerId, sinceTime: Option[Stri
   override protected def initialAttributes: Attributes = Attributes.name("KubernetesHttpLogSource")
 
   override def createLogic(inheritedAttributes: Attributes): GraphStageLogic =
-    new GraphStageLogicWithLogging(shape) {
-      logic =>
+    new GraphStageLogicWithLogging(shape) { logic =>
 
-      private val queue = mutable.Queue.empty[LogLine]
+      private val queue = mutable.Queue.empty[ByteString]
+      private var lastTimestamp = sinceTime
 
-      final override def preStart(): Unit =
+      def fetchLogs(): Unit =
         try {
-          val path = Path / "api" / "v1" / "namespaces" / kubeRestClient.getNamespace / "pods" / id.asString / "log"
-          val qB = Map.newBuilder[String, String]
-          qB += "timestamps" → "true"
-          qB ++= sinceTime.map("sinceTime" → _)
-          if (waitForSentinel) qB += "follow" → "true"
+          val path = constructPath(kubeRestClient.getNamespace, id.asString)
+          val query = constructQuery(lastTimestamp, waitForSentinel)
 
-          val query = Query(qB.result())
-
-          log.debug("Fetching K8S HTTP Logs w/ Query: {}", query)
+          log.debug("* Fetching K8S HTTP Logs w/ Path: {} Query: {}", path, query)
 
           val url = Uri(kubeRestClient.getMasterUrl.toString)
             .withPath(path)
@@ -201,14 +273,14 @@ final class KubernetesRestLogSourceStage(id: ContainerId, sinceTime: Option[Stri
 
       def onFailure(e: Throwable): Unit = e match {
         case _: SocketTimeoutException =>
-          log.warning("Logging socket to Kubernetes timed out. Likely not an error.")
+          log.warning("* Logging socket to Kubernetes timed out.") // this should only happen with follow behavior
         case _ =>
-          log.error(e, "Retrieving the logs from Kubernetes failed.")
+          log.error(e, "* Retrieving the logs from Kubernetes failed.")
       }
 
-      val emitCallback: AsyncCallback[LogLine] = getAsyncCallback[LogLine] { line =>
+      val emitCallback: AsyncCallback[ByteString] = getAsyncCallback[ByteString] { line =>
         if (isAvailable(out)) {
-          pushLine(line)
+          pushLines(line)
         } else {
           queue.enqueue(line)
         }
@@ -220,59 +292,32 @@ final class KubernetesRestLogSourceStage(id: ContainerId, sinceTime: Option[Stri
 
         override def onResponse(call: Call, response: Response): Unit =
           try {
-            val src = response.body.source
-
-            // we need to drop any "old" log lines, i.e. any before the sinceTime variable
-            // it might be better longterm to instantiate the since Time as a date, timestamp, or milliseconds
-            // for quick less than / greater than compare
-            var foundRelevant = false
-
-            // todo - right now this exhausts the initial return and exits; for sentinel "mode" we need to keep going… (needs figuring out)
-            while (!src.exhausted) { // todo - FIXME this is not the best idiomatic way to do this but for the life of me can't remember the better approach
-              val line: Option[LogLine] = for {
-                l <- Option(src.readUtf8Line()) if !l.isEmpty
-                _ = log.debug("* Raw line of k8s log: {} (sinceTime: {})", l, sinceTime)
-                st <- sinceTime.orElse(Some("")) if l.startsWith(st) || foundRelevant // todo - fix me to be less janky
-                _ = log.debug("* sinceTime: {}", st)
-                p = l.indexOf(" ")
-                _ = log.debug("* first space pos: {}", p)
-                ts = l.substring(0, p)
-                _ = log.debug("* log line timestamp: {}", ts)
-                msg = l.substring(p + 1)
-                _ = log.debug("* log message: {}", msg)
-              } yield {
-                foundRelevant = true
-                LogLine(ts, "stdout", msg) // TODO - when we can distinguish stderr: https://github.com/kubernetes/kubernetes/issues/28167
-              }
-
-              log.debug("Received and parsed a LogLine: {}", line)
-
-              for (l <- line) emitCallback.invoke(l)
-            }
-
-            src.close()
+            val (latestTS, lines) = readLines(response.body.source(), lastTimestamp)
+            lastTimestamp = latestTS
+            emitCallback.invoke(ByteString(lines.mkString("", "\n", "\n"))) //  trailing newline is necessary or the frame won't be decoded and break the akka stream
 
           } catch {
             case NonFatal(e) =>
+              log.error(e, "* Reading Kubernetes HTTP Response failed.")
               logic.onFailure(e)
               throw e
           }
       }
 
-      def pushLine(line: LogLine): Unit = {
-        val json = line.toJson.compactPrint
-        log.debug("Pushing a line of JSON for kubernetes logging: {}", json)
-        push(out, ByteString(json))
+      def pushLines(lines: ByteString): Unit = {
+        log.debug("* Pushing a chunk of kubernetes logging: {}", lines.utf8String)
+        push(out, lines)
       }
 
       setHandler(
         out,
         new OutHandler {
-          override def onPull(): Unit = if (queue.nonEmpty) pushLine(queue.dequeue())
-
-          override def onDownstreamFinish(): Unit = {
-            setKeepGoing(waitForSentinel) // todo - this is where we should probably be dealing w/ the "follow" mode of sentinel; double check
-            super.onDownstreamFinish()
+          override def onPull(): Unit = {
+            // if we still have lines queued up, return those; else make a new HTTP read.
+            if (queue.nonEmpty)
+              pushLines(queue.dequeue())
+            else
+              fetchLogs()
           }
         })
     }
