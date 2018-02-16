@@ -17,9 +17,11 @@
 
 package whisk.core.containerpool.kubernetes.test
 
+import java.time.LocalDateTime
+
 import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
-import akka.stream.scaladsl.{Flow, Framing, Sink, Source}
+import akka.stream.scaladsl.{Concat, Flow, Framing, Sink, Source}
 import akka.util.ByteString
 
 import scala.concurrent.Await
@@ -36,13 +38,17 @@ import org.scalatest.junit.JUnitRunner
 import org.scalatest.Matchers
 import org.scalatest.time.{Seconds, Span}
 import common.{StreamLogging, WskActorSystem}
+import okio.Buffer
 import whisk.common.LogMarker
 import whisk.common.LoggingMarkers.INVOKER_KUBECTL_CMD
 import whisk.common.TransactionId
-import whisk.core.containerpool.ContainerId
-import whisk.core.containerpool.kubernetes.KubernetesClient
+import whisk.core.containerpool.{ContainerAddress, ContainerId}
+import whisk.core.containerpool.kubernetes.{KubernetesApi, KubernetesClient, KubernetesRestLogSourceStage}
 import whisk.core.containerpool.docker.ProcessRunningException
 import whisk.core.containerpool.logging.LogLine
+
+import scala.collection.mutable
+import scala.util.Try
 @RunWith(classOf[JUnitRunner])
 class KubernetesClientTests
     extends FlatSpec
@@ -52,6 +58,8 @@ class KubernetesClientTests
     with Eventually
     with WskActorSystem {
 
+  import KubernetesClientTests._
+
   implicit val materializer: ActorMaterializer = ActorMaterializer()
 
   /** Reads logs into memory and awaits them */
@@ -60,7 +68,8 @@ class KubernetesClientTests
       .result(
         source
           .via(Framing.delimiter(ByteString("\n"), 1024))
-          .via(Flow[ByteString].map(_.utf8String.parseJson.convertTo[LogLine]))
+          .via(Flow[ByteString].map(l => Try(l.utf8String.parseJson.convertTo[LogLine]).getOrElse(LogLine("", "", ""))))
+          .filter(_ != LogLine("", "", ""))
           .runWith(Sink.seq[LogLine]),
         timeout)
       .toVector
@@ -81,8 +90,6 @@ class KubernetesClientTests
   def kubernetesClient(fixture: => Future[String]) = new KubernetesClient()(global) {
     override def findKubectlCmd() = kubectlCommand
     override def executeProcess(args: Seq[String], timeout: Duration)(implicit ec: ExecutionContext, as: ActorSystem) =
-      fixture
-    override def fetchHTTPLogs(id: ContainerId, sinceTime: Option[String]) =
       fixture
   }
 
@@ -163,8 +170,29 @@ class KubernetesClientTests
                     |2018-02-06T00:09:35.383116503Z XXX_THE_END_OF_A_WHISK_ACTIVATION_XXX
                     |""".stripMargin
 
+  def firstSource(lastTimestamp: Option[LocalDateTime] = None) =
+    Source.single(
+      ByteString(
+        KubernetesRestLogSourceStage
+          .readLines(new Buffer().writeUtf8(firstLog), lastTimestamp, List.empty)
+          ._2
+          .mkString("", "\n", "\n")))
+
+  def secondSource(lastTimestamp: Option[LocalDateTime] = None) =
+    Source.single(
+      ByteString(
+        KubernetesRestLogSourceStage
+          .readLines(new Buffer().writeUtf8(secondLog), lastTimestamp, List.empty)
+          ._2
+          .mkString("", "\n", "\n")))
+
   it should "return all logs when no sinceTime passed" in {
-    val client = kubernetesClient { Future.successful(firstLog) }
+    val client = new TestKubernetesClient {
+      override def logs(id: ContainerId, sinceTime: Option[LocalDateTime], waitForSentinel: Boolean)(
+        implicit transid: TransactionId): Source[ByteString, Any] = {
+        firstSource()
+      }
+    }
     val logs = awaitLogs(client.logs(id, None))
     logs should have size 3
     logs(0) shouldBe LogLine("2018-02-06T00:00:18.419889342Z", "stdout", "first activation")
@@ -172,19 +200,73 @@ class KubernetesClientTests
   }
 
   it should "return all logs after the one matching sinceTime" in {
-    val client = kubernetesClient { Future.successful(firstLog + secondLog) }
-    val logs = awaitLogs(client.logs(id, Some("2018-02-06T00:00:18.419988733Z")))
+
+    val testDate: Option[LocalDateTime] = "2018-02-06T00:00:18.419988733Z"
+    val client = new TestKubernetesClient {
+      override def logs(id: ContainerId, sinceTime: Option[LocalDateTime], waitForSentinel: Boolean)(
+        implicit transid: TransactionId): Source[ByteString, Any] = {
+        Source.combine(firstSource(testDate), secondSource(testDate))(Concat(_))
+      }
+    }
+    val logs = awaitLogs(client.logs(id, testDate))
     logs should have size 3
     logs(0) shouldBe LogLine("2018-02-06T00:09:35.38267193Z", "stdout", "second activation")
     logs(2) shouldBe LogLine("2018-02-06T00:09:35.383116503Z", "stdout", "XXX_THE_END_OF_A_WHISK_ACTIVATION_XXX")
   }
 
   it should "return all logs if none match sinceTime" in {
-    val client = kubernetesClient { Future.successful(secondLog) }
-    val logs = awaitLogs(client.logs(id, Some("2018-02-06T00:00:18.419988733Z")))
+    val testDate: Option[LocalDateTime] = "2018-02-06T00:00:18.419988733Z"
+    val client = new TestKubernetesClient {
+      override def logs(id: ContainerId, sinceTime: Option[LocalDateTime], waitForSentinel: Boolean)(
+        implicit transid: TransactionId): Source[ByteString, Any] = {
+        secondSource(testDate)
+      }
+    }
+    val logs = awaitLogs(client.logs(id, testDate))
     logs should have size 3
     logs(0) shouldBe LogLine("2018-02-06T00:09:35.38267193Z", "stdout", "second activation")
     logs(2) shouldBe LogLine("2018-02-06T00:09:35.383116503Z", "stdout", "XXX_THE_END_OF_A_WHISK_ACTIVATION_XXX")
   }
 
+}
+
+object KubernetesClientTests {
+  import scala.language.implicitConversions
+
+  implicit def strToDate(str: String): Option[LocalDateTime] =
+    Try(LocalDateTime.parse(str, KubernetesClient.K8SDateTimeFormat)).toOption
+
+  class TestKubernetesClient extends KubernetesApi {
+    var runs = mutable.Buffer.empty[(String, String, Seq[String])]
+    var inspects = mutable.Buffer.empty[ContainerId]
+    var rms = mutable.Buffer.empty[ContainerId]
+    var rmByLabels = mutable.Buffer.empty[(String, String)]
+    var logCalls = mutable.Buffer.empty[(ContainerId, Option[LocalDateTime])]
+
+    def run(name: String, image: String, args: Seq[String] = Seq.empty[String])(
+      implicit transid: TransactionId): Future[ContainerId] = {
+      runs += ((name, image, args))
+      Future.successful(ContainerId("testId"))
+    }
+
+    def inspectIPAddress(id: ContainerId)(implicit transid: TransactionId): Future[ContainerAddress] = {
+      inspects += id
+      Future.successful(ContainerAddress("testIp"))
+    }
+
+    def rm(id: ContainerId)(implicit transid: TransactionId): Future[Unit] = {
+      rms += id
+      Future.successful(())
+    }
+
+    def rm(key: String, value: String)(implicit transid: TransactionId): Future[Unit] = {
+      rmByLabels += ((key, value))
+      Future.successful(())
+    }
+    def logs(id: ContainerId, sinceTime: Option[LocalDateTime], waitForSentinel: Boolean = false)(
+      implicit transid: TransactionId): Source[ByteString, Any] = {
+      logCalls += ((id, sinceTime))
+      Source.single(ByteString.empty)
+    }
+  }
 }
