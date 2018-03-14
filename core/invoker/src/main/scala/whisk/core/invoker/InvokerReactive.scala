@@ -20,7 +20,7 @@ package whisk.core.invoker
 import java.nio.charset.StandardCharsets
 import java.time.Instant
 
-import akka.actor.{ActorRefFactory, ActorSystem, Props}
+import akka.actor.{ActorRefFactory, ActorSystem, CoordinatedShutdown, Props}
 import akka.event.Logging.InfoLevel
 import akka.stream.ActorMaterializer
 import org.apache.kafka.common.errors.RecordTooLargeException
@@ -72,7 +72,9 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
           "--ulimit" -> Set("nofile=1024:1024"),
           "--pids-limit" -> Set("1024")) ++ logsProvider.containerParameters)
   containerFactory.init()
-  sys.addShutdownHook(containerFactory.cleanup())
+
+  // Registers with Akka to shut down *before* the ActorSystem shutdown hooks; this should make shutdown cleaner
+  CoordinatedShutdown(actorSystem).addJvmShutdownHook(containerFactory.cleanup())
 
   /** Initialize needed databases */
   private val entityStore = WhiskEntityStore.datastore()
