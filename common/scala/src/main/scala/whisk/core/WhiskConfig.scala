@@ -249,4 +249,8 @@ object ConfigKeys {
   val splunk = s"$logStore.splunk"
 
   val mesos = "whisk.mesos"
+
+  val containerProxy = "whisk.container-proxy"
+  val containerProxyTimeouts = s"$containerProxy.timeouts"
+
 }
