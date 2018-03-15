@@ -247,4 +247,8 @@ object ConfigKeys {
 
   val logStore = "whisk.logstore"
   val splunk = s"$logStore.splunk"
+
+  val containerProxy = "whisk.container-proxy"
+  val containerProxyTimeouts = s"$containerProxy.timeouts"
+
 }
