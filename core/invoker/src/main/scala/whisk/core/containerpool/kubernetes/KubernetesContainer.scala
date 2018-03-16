@@ -118,6 +118,10 @@ class KubernetesContainer(protected[core] val id: ContainerId,
         // Adding + 1 since we know there's a newline byte being read
         obj.jsonSize.toLong + 1
       }
+      .map { line =>
+        lastTimestamp.set(Option(line.time))
+        line
+      }
       .via(new CompleteAfterOccurrences(_.log == stringSentinel, 2, waitForSentinel))
       .recover {
         case _: StreamLimitReachedException =>
@@ -131,10 +135,7 @@ class KubernetesContainer(protected[core] val id: ContainerId,
           TypedLogLine(Instant.now, "stderr", Messages.logFailure)
       }
       .takeWithin(waitForLogs)
-      .map { line =>
-        lastTimestamp.set(Some(line.time))
-        line.toByteString
-      }
+      .map { _.toByteString }
   }
 
 }

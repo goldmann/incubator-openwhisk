@@ -47,7 +47,7 @@ import whisk.core.containerpool.docker.ProcessRunner
 import whisk.core.entity.ByteSize
 import whisk.core.entity.size._
 
-import scala.concurrent.duration.Duration
+import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.blocking
@@ -229,7 +229,7 @@ class KubernetesClient(
 
     Source
       .fromGraph(new KubernetesRestLogSourceStage(container.id, sinceTime, waitForSentinel))
-      .log("foobar")
+      .log("kubernetesLogs")
 
   }
 
@@ -311,6 +311,12 @@ object KubernetesRestLogSourceStage {
 
   import KubernetesClient.{formatK8STimestamp, parseK8STimestamp}
 
+  val retryDelay = 100.milliseconds
+
+  sealed trait K8SRestLogTimingEvent
+
+  case object K8SRestLogRetry extends K8SRestLogTimingEvent
+
   def constructPath(namespace: String, containerId: String): Path =
     Path / "api" / "v1" / "namespaces" / namespace / "pods" / containerId / "log"
 
@@ -374,7 +380,7 @@ final class KubernetesRestLogSourceStage(id: ContainerId, sinceTime: Option[Inst
   override protected def initialAttributes: Attributes = Attributes.name("KubernetesHttpLogSource")
 
   override def createLogic(inheritedAttributes: Attributes): GraphStageLogic =
-    new GraphStageLogicWithLogging(shape) { logic =>
+    new TimerGraphStageLogicWithLogging(shape) { logic =>
 
       private val queue = mutable.Queue.empty[TypedLogLine]
       private var lastTimestamp = sinceTime
@@ -384,7 +390,7 @@ final class KubernetesRestLogSourceStage(id: ContainerId, sinceTime: Option[Inst
           val path = constructPath(kubeRestClient.getNamespace, id.asString)
           val query = constructQuery(lastTimestamp, waitForSentinel)
 
-          log.debug("* Fetching K8S HTTP Logs w/ Path: {} Query: {}", path, query)
+          log.debug("*** Fetching K8S HTTP Logs w/ Path: {} Query: {}", path, query)
 
           val url = Uri(kubeRestClient.getMasterUrl.toString)
             .withPath(path)
@@ -407,11 +413,18 @@ final class KubernetesRestLogSourceStage(id: ContainerId, sinceTime: Option[Inst
       }
 
       val emitCallback: AsyncCallback[Seq[TypedLogLine]] = getAsyncCallback[Seq[TypedLogLine]] {
-        case firstLine +: restOfLines if isAvailable(out) =>
-          pushLine(firstLine)
-          queue ++= restOfLines
-        case lines =>
-          queue ++= lines
+        case lines @ firstLine +: restOfLines =>
+          if (isAvailable(out)) {
+            log.debug("* Lines Available & output ready; pushing {} (remaining: {})", firstLine, restOfLines)
+            pushLine(firstLine)
+            queue ++= restOfLines
+          } else {
+            log.debug("* Output isn't ready; queueing lines: {}", lines)
+            queue ++= lines
+          }
+        case Nil =>
+          log.debug("* Empty lines returned.")
+          retryLogs()
       }
 
       class LogFetchCallback extends Callback {
@@ -422,9 +435,12 @@ final class KubernetesRestLogSourceStage(id: ContainerId, sinceTime: Option[Inst
           try {
             val lines = readLines(response.body.source, lastTimestamp)
 
+            log.debug("* Read & decoded lines for K8S HTTP: {}", lines)
+
             response.body.source.close()
 
             lines.lastOption.foreach { line =>
+              log.debug("* Updating lastTimestamp (sinceTime) to {}", Option(line.time))
               lastTimestamp = Option(line.time)
             }
 
@@ -447,12 +463,29 @@ final class KubernetesRestLogSourceStage(id: ContainerId, sinceTime: Option[Inst
         new OutHandler {
           override def onPull(): Unit = {
             // if we still have lines queued up, return those; else make a new HTTP read.
-            if (queue.nonEmpty)
+            if (queue.nonEmpty) {
+              log.debug("* onPull, nonEmpty queue... pushing line")
               pushLine(queue.dequeue())
-            else
+            } else {
+              log.debug("* onPull, empty queue... fetching logs")
               fetchLogs()
+            }
           }
         })
+
+      def retryLogs(): Unit = {
+        // Pause before retrying so we don't thrash Kubernetes w/ HTTP requests
+        log.debug("* Scheduling a retry of log fetch in {}", retryDelay)
+        scheduleOnce(K8SRestLogRetry, retryDelay)
+      }
+
+      override protected def onTimer(timerKey: Any): Unit = timerKey match {
+        case K8SRestLogRetry =>
+          log.debug("* Timer trigger for log fetch retry")
+          fetchLogs()
+        case x =>
+          log.warning("* Got a timer trigger with an unknown key: {}", x)
+      }
     }
 }
 
