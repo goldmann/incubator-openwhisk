@@ -128,7 +128,7 @@ class KubernetesContainerTests
     val image = "image"
     val userProvidedImage = false
     val environment = Map("test" -> "hi")
-    val labels = Map("invoker" -> "0")
+    val labels = Map("invoker" -> "0", "status" -> "active")
     val name = "my_Container(1)"
     val container = KubernetesContainer.create(
       transid = transid,

@@ -207,7 +207,9 @@ class KubernetesClient(
           response.discardEntityBytes()
         }
     } else {
-      Future.successful({})
+      runCmd(
+        Seq("label", "--overwrite", "pod", container.id.asString, "status=" + KubernetesContainer.StatusPaused),
+        config.timeouts.rm).map(_ => ())
     }
   }
 
@@ -218,7 +220,9 @@ class KubernetesClient(
           response.discardEntityBytes()
         }
     } else {
-      Future.successful({})
+      runCmd(
+        Seq("label", "--overwrite", "pod", container.id.asString, "status=" + KubernetesContainer.StatusActive),
+        config.timeouts.rm).map(_ => ())
     }
   }
 
