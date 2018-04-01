@@ -41,6 +41,10 @@ import whisk.http.Messages
 
 object KubernetesContainer {
 
+  val StatusActive = "active"
+  val StatusPaused = "paused"
+  val StatusPrewarmed = "prewarmed"
+
   /**
    * Creates a container running in kubernetes
    *

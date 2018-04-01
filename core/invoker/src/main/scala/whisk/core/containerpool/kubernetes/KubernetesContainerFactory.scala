@@ -39,7 +39,7 @@ class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ac
                                                                      logging: Logging)
     extends ContainerFactory {
 
-  implicit val kubernetes = new KubernetesClient()(ec)
+  implicit lazy val kubernetes: KubernetesApi = new KubernetesClient()(ec)
 
   /** Perform cleanup on init */
   override def init(): Unit = cleanup()
@@ -61,6 +61,13 @@ class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ac
       actionImage.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
     }
 
+    val commonLabels = Map("invoker" -> label, "image" -> actionImage.name)
+    val labels = if (tid.id == TransactionId.invokerWarmup.id) {
+      commonLabels ++ Map("status" -> KubernetesContainer.StatusPrewarmed)
+    } else {
+      commonLabels ++ Map("status" -> KubernetesContainer.StatusActive)
+    }
+
     KubernetesContainer.create(
       tid,
       name,
@@ -68,7 +75,7 @@ class KubernetesContainerFactory(label: String, config: WhiskConfig)(implicit ac
       userProvidedImage,
       memory,
       environment = Map("__OW_API_HOST" -> config.wskApiHost),
-      labels = Map("invoker" -> label))
+      labels = labels)
   }
 }
 
